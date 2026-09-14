@@ -304,6 +304,7 @@ function openDetail(drill) {
     </div>
   `;
   overlay.classList.remove("hidden");
+  lockBodyScroll();
 
   refreshScoreSection(drill);
 
@@ -343,6 +344,29 @@ function openDetail(drill) {
 
 function closeDetail() {
   overlay.classList.add("hidden");
+  unlockBodyScroll();
+}
+
+// iOS Safari rubber-bands the page behind a fixed overlay when the overlay's
+// own content is scrolled past its edges, which briefly reveals the drill
+// grid behind the modal. Locking body scroll while a modal is open stops it.
+let bodyScrollLockCount = 0;
+let bodyScrollY = 0;
+function lockBodyScroll() {
+  if (bodyScrollLockCount === 0) {
+    bodyScrollY = window.scrollY;
+    document.body.style.top = `-${bodyScrollY}px`;
+    document.body.classList.add("modal-open");
+  }
+  bodyScrollLockCount++;
+}
+function unlockBodyScroll() {
+  bodyScrollLockCount = Math.max(0, bodyScrollLockCount - 1);
+  if (bodyScrollLockCount === 0) {
+    document.body.classList.remove("modal-open");
+    document.body.style.top = "";
+    window.scrollTo(0, bodyScrollY);
+  }
 }
 
 function escapeHtml(str) {
@@ -546,6 +570,7 @@ function openCreate() {
   renderEquipmentCheckboxes();
   resetBuilder();
   createOverlay.classList.remove("hidden");
+  lockBodyScroll();
 }
 
 function openEdit(drill) {
@@ -575,11 +600,13 @@ function openEdit(drill) {
   renderBuilderPreview();
 
   createOverlay.classList.remove("hidden");
+  lockBodyScroll();
 }
 
 function closeCreate() {
   createOverlay.classList.add("hidden");
   editingDrillId = null;
+  unlockBodyScroll();
 }
 
 function handleCreateSubmit(e) {

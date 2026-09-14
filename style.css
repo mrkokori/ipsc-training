@@ -168,11 +168,22 @@ select {
   justify-content: center;
   padding: 40px 16px;
   overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 10;
 }
 
 .overlay.hidden { display: none; }
 .hidden { display: none !important; }
+
+/* Prevents the page behind a modal from scrolling (and rubber-banding into
+   view on iOS Safari) while a detail/edit overlay is open. */
+body.modal-open {
+  position: fixed;
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  width: 100%;
+}
 
 .detail-panel {
   background: var(--bg-elevated);
@@ -634,16 +645,38 @@ select {
   .own-toggle, .add-btn, #filter-reset { flex: 1 1 auto; }
   .result-count { flex: 1 1 100%; margin-left: 0; text-align: right; }
 
-  .overlay { padding: 0; align-items: stretch; }
-  .detail-panel { max-width: none; min-height: 100%; border-radius: 0; padding: 18px 14px; }
+  /* Fully opaque backdrop: on iOS a translucent one lets the drill grid
+     behind flash into view during scroll bounce, which read as "other
+     trainings in the background". */
+  .overlay { padding: 0; align-items: stretch; background: var(--bg); }
+  .detail-panel {
+    max-width: none;
+    min-height: 100%;
+    border-radius: 0;
+    padding: 18px 14px 0;
+    display: flex;
+    flex-direction: column;
+  }
 
   .form-grid { grid-template-columns: 1fr; }
 
   .builder-toolbar .tool-btn { padding: 8px 12px; font-size: 0.85rem; }
   .builder-svg-wrap { display: flex; justify-content: center; }
 
-  .form-actions { flex-wrap: wrap; }
-  .form-actions button { flex: 1 1 auto; }
+  /* Pin the primary actions (Speichern/Abschließen, Bearbeiten/Teilen/Löschen)
+     to the bottom of the screen instead of the end of the scrolling content,
+     so they stay reachable without scrolling past them or hitting the very
+     edge of the screen. */
+  .form-actions, #action-row {
+    position: sticky;
+    bottom: 0;
+    flex-wrap: wrap;
+    margin: 16px -14px 0;
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+    background: var(--bg-elevated);
+    border-top: 1px solid var(--border);
+  }
+  .form-actions button, #action-row button { flex: 1 1 auto; }
 
   .db-tools { margin: -4px 0 16px; }
   .db-tools .tool-btn { flex: 1 1 auto; }
