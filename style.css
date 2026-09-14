@@ -545,6 +545,16 @@ body.modal-open {
   margin: -8px 0 20px;
 }
 
+.own-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 .db-tools-msg {
   color: var(--text-dim);
   font-size: 0.82rem;

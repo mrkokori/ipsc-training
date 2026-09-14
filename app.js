@@ -33,6 +33,7 @@ const builderHint = document.getElementById("builder-hint");
 
 const restoreBuiltinsBtn = document.getElementById("restore-builtins-btn");
 const exportBtn = document.getElementById("export-btn");
+const exportIncludeScoresCheckbox = document.getElementById("export-include-scores");
 const importBtn = document.getElementById("import-btn");
 const importFileInput = document.getElementById("import-file-input");
 const dbToolsMsg = document.getElementById("db-tools-msg");
@@ -716,16 +717,20 @@ function slugify(str) {
 }
 
 function exportAll() {
+  const includeScores = exportIncludeScoresCheckbox.checked;
   const payload = {
     type: "ipsc-training-export",
     version: 1,
     exportedAt: new Date().toISOString(),
     customDrills,
     editedBuiltins,
-    deletedBuiltinIds
+    deletedBuiltinIds,
+    ...(includeScores ? { scoreLogs } : {})
   };
   downloadJSON(JSON.stringify(payload, null, 2), "ipsc-training-export.json");
-  showDbMsg("Export heruntergeladen – Datei an Kollegen weitergeben, die können sie importieren.");
+  showDbMsg(includeScores
+    ? "Export (inkl. eigener Zeiten) heruntergeladen."
+    : "Export heruntergeladen – Datei an Kollegen weitergeben, die können sie importieren.");
 }
 
 function stripForSharing(drill) {
@@ -765,16 +770,26 @@ function importFile(file) {
       if (data.type === "ipsc-training-export") {
         const incoming = data.customDrills || [];
         const existingIds = new Set(customDrills.map(d => d.id));
+        const idRemap = {};
         for (const d of incoming) {
           const clone = { ...d, custom: true };
           if (!clone.id || existingIds.has(clone.id)) {
-            clone.id = "custom-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+            const newId = "custom-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+            if (d.id) idRemap[d.id] = newId;
+            clone.id = newId;
           }
           existingIds.add(clone.id);
           customDrills.push(clone);
         }
         editedBuiltins = { ...editedBuiltins, ...(data.editedBuiltins || {}) };
         deletedBuiltinIds = [...new Set([...deletedBuiltinIds, ...(data.deletedBuiltinIds || [])])];
+        if (data.scoreLogs) {
+          for (const [drillId, entries] of Object.entries(data.scoreLogs)) {
+            const key = idRemap[drillId] || drillId;
+            scoreLogs[key] = [...(scoreLogs[key] || []), ...entries];
+          }
+          saveScoreLogs();
+        }
         saveCustomDrills();
         saveEditedBuiltins();
         saveDeletedBuiltins();
