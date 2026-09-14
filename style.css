@@ -620,6 +620,10 @@ select {
 
 /* ---------- Mobile (iPhone/Android, opened locally as a file) ---------- */
 @media (max-width: 480px) {
+  /* iOS Safari auto-zooms the whole page when focusing a text input smaller
+     than 16px — forcing 16px here stops that zoom-and-scroll-away behavior */
+  input, select, textarea { font-size: 16px !important; }
+
   .site-header { padding: 18px 14px 12px; }
   .site-header h1 { font-size: 1.3rem; }
   main { padding: 14px 10px 40px; }
