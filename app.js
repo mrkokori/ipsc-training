@@ -44,7 +44,6 @@ function emptyBuilderLayout() {
 let builderLayout = emptyBuilderLayout();
 let builderTool = "target";
 let pendingPoint = null;
-let pathBuffer = [];
 let historyStack = [];
 let dragState = null;
 let pointerDownPoint = null;
@@ -55,8 +54,8 @@ let editingIsCustom = false;
 let equipmentSelected = new Set();
 
 const TOOL_HINTS = {
-  target: "Klicke in die Fläche, um ein Ziel zu platzieren.",
-  steel: "Klicke in die Fläche, um eine Stahlplatte zu platzieren.",
+  target: "Klicke in die Fläche, um ein Target zu platzieren.",
+  steel: "Klicke in die Fläche, um eine Plate zu platzieren.",
   popper: "Klicke in die Fläche, um einen Popper zu platzieren.",
   pendler: "Klicke, um einen Pendler (Swinger) zu platzieren.",
   updown: "Klicke, um ein Up-Down-Ziel zu platzieren.",
@@ -66,7 +65,6 @@ const TOOL_HINTS = {
   box: "Erster Klick = eine Ecke der Box, zweiter Klick = gegenüberliegende Ecke.",
   tisch: "Klicke, um einen Tisch zu platzieren.",
   sessel: "Klicke, um einen Sessel zu platzieren.",
-  path: "Jeder Klick fügt einen Punkt zum Bewegungspfad hinzu. Mit \"Pfad abschließen\" übernehmen.",
   delete: "Klicke auf ein Element, um es zu löschen."
 };
 const DRAG_HINT = " Bereits gesetzte Elemente kannst du direkt anfassen und verschieben.";
@@ -592,7 +590,6 @@ function openEdit(drill) {
     ? { ...emptyBuilderLayout(), ...JSON.parse(JSON.stringify(drill.layout)) }
     : emptyBuilderLayout();
   pendingPoint = null;
-  pathBuffer = [];
   historyStack = [];
   renderBuilderPreview();
 
@@ -808,7 +805,6 @@ function importFile(file) {
 function resetBuilder() {
   builderLayout = emptyBuilderLayout();
   pendingPoint = null;
-  pathBuffer = [];
   historyStack = [];
   renderBuilderPreview();
 }
@@ -836,14 +832,6 @@ function initBuilder() {
     const last = builderLayout.shooterPositions[builderLayout.shooterPositions.length - 1];
     if (!last) return;
     last.facing = ((last.facing || 0) + 45) % 360;
-    renderBuilderPreview();
-  });
-
-  document.getElementById("finish-path-btn").addEventListener("click", () => {
-    if (pathBuffer.length < 2) return;
-    historyStack.push({ type: "path", prevValue: builderLayout.path.slice() });
-    builderLayout.path = pathBuffer.slice();
-    pathBuffer = [];
     renderBuilderPreview();
   });
 
@@ -1021,8 +1009,6 @@ function placeAtPoint(p) {
   } else if (builderTool === "sessel") {
     builderLayout.props.push({ x: p.x, y: p.y, type: "sessel", label: "Sessel" });
     historyStack.push({ type: "props" });
-  } else if (builderTool === "path") {
-    pathBuffer.push([p.x, p.y]);
   }
 
   renderBuilderPreview();
@@ -1031,11 +1017,7 @@ function placeAtPoint(p) {
 function undoBuilder() {
   const last = historyStack.pop();
   if (!last) return;
-  if (last.type === "path") {
-    builderLayout.path = last.prevValue;
-  } else {
-    builderLayout[last.type].pop();
-  }
+  builderLayout[last.type].pop();
   renderBuilderPreview();
 }
 
@@ -1045,13 +1027,6 @@ function renderBuilderPreview() {
 
   if (pendingPoint) {
     extra += `<circle cx="${pendingPoint.x}" cy="${pendingPoint.y}" r="5" fill="none" stroke="#e8620c" stroke-width="2" stroke-dasharray="3,2"/>`;
-  }
-  if (pathBuffer.length > 0) {
-    const pts = pathBuffer.map(p => p.join(",")).join(" ");
-    extra += `<polyline points="${pts}" fill="none" stroke="#e8620c" stroke-width="2" stroke-dasharray="4,3"/>`;
-    for (const [px, py] of pathBuffer) {
-      extra += `<circle cx="${px}" cy="${py}" r="3" fill="#e8620c"/>`;
-    }
   }
 
   builderSvg.innerHTML = `
