@@ -270,17 +270,6 @@ body.modal-open {
   font-size: 0.95rem;
 }
 
-.own-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-dim);
-  font-size: 0.85rem;
-  align-self: center;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
 .add-btn {
   background: var(--accent);
   color: #fff;
@@ -642,7 +631,7 @@ body.modal-open {
   .filters { padding: 12px; gap: 10px; }
   .filter-group { flex: 1 1 100%; }
   select { width: 100%; min-width: 0; }
-  .own-toggle, .add-btn, #filter-reset { flex: 1 1 auto; }
+  .add-btn, #filter-reset { flex: 1 1 auto; }
   .result-count { flex: 1 1 100%; margin-left: 0; text-align: right; }
 
   /* Fully opaque backdrop: on iOS a translucent one lets the drill grid

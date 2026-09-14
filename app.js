@@ -9,7 +9,7 @@ const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
 const DELETED_BUILTINS_KEY = "ipscDeletedBuiltins";
 const SCORE_LOG_KEY = "ipscScoreLogs";
 
-const state = { category: "", difficulty: "", equipment: "", ownOnly: false };
+const state = { category: "", difficulty: "", equipment: "" };
 
 const grid = document.getElementById("drill-grid");
 const resultCount = document.getElementById("result-count");
@@ -17,7 +17,6 @@ const catSelect = document.getElementById("filter-category");
 const diffSelect = document.getElementById("filter-difficulty");
 const equipSelect = document.getElementById("filter-equipment");
 const resetBtn = document.getElementById("filter-reset");
-const ownOnlyCheckbox = document.getElementById("filter-own-only");
 const overlay = document.getElementById("detail-overlay");
 const detailContent = document.getElementById("detail-content");
 const closeBtn = document.getElementById("detail-close");
@@ -87,10 +86,9 @@ async function init() {
   catSelect.addEventListener("change", () => { state.category = catSelect.value; render(); });
   diffSelect.addEventListener("change", () => { state.difficulty = diffSelect.value; render(); });
   equipSelect.addEventListener("change", () => { state.equipment = equipSelect.value; render(); });
-  ownOnlyCheckbox.addEventListener("change", () => { state.ownOnly = ownOnlyCheckbox.checked; render(); });
   resetBtn.addEventListener("click", () => {
-    state.category = ""; state.difficulty = ""; state.equipment = ""; state.ownOnly = false;
-    catSelect.value = ""; diffSelect.value = ""; equipSelect.value = ""; ownOnlyCheckbox.checked = false;
+    state.category = ""; state.difficulty = ""; state.equipment = "";
+    catSelect.value = ""; diffSelect.value = ""; equipSelect.value = "";
     render();
   });
   closeBtn.addEventListener("click", closeDetail);
@@ -213,7 +211,6 @@ function uniqueSorted(arr) {
 
 function getFiltered() {
   return DRILLS.filter(d => {
-    if (state.ownOnly && !d.custom) return false;
     if (state.category && d.category !== state.category) return false;
     if (state.difficulty && d.difficulty !== state.difficulty) return false;
     if (state.equipment && !(d.equipment || []).includes(state.equipment)) return false;
