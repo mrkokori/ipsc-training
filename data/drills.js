@@ -1,0 +1,1 @@
+window.IPSC_DRILLS = [];
