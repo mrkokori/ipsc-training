@@ -8,6 +8,7 @@ const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
 const DELETED_BUILTINS_KEY = "ipscDeletedBuiltins";
 const SCORE_LOG_KEY = "ipscScoreLogs";
+const STORAGE_WARNING_KEY = "ipscStorageWarningDismissed";
 
 const state = { category: "", difficulty: "", equipment: "" };
 
@@ -37,6 +38,9 @@ const exportIncludeScoresCheckbox = document.getElementById("export-include-scor
 const importBtn = document.getElementById("import-btn");
 const importFileInput = document.getElementById("import-file-input");
 const dbToolsMsg = document.getElementById("db-tools-msg");
+
+const storageWarning = document.getElementById("storage-warning");
+const storageWarningClose = document.getElementById("storage-warning-close");
 
 function emptyBuilderLayout() {
   return { viewW: 400, viewH: 500, targets: [], shooterPositions: [], walls: [], boxes: [], props: [], path: [] };
@@ -112,6 +116,12 @@ async function init() {
 
   initBuilder();
   initEquipmentMultiselect();
+
+  if (localStorage.getItem(STORAGE_WARNING_KEY) !== "1") storageWarning.classList.remove("hidden");
+  storageWarningClose.addEventListener("click", () => {
+    storageWarning.classList.add("hidden");
+    localStorage.setItem(STORAGE_WARNING_KEY, "1");
+  });
 }
 
 // ---------- Storage helpers ----------
