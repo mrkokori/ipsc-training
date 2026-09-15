@@ -1,0 +1,11 @@
+{
+  "name": "ipsc-training",
+  "private": true,
+  "description": "IPSC Trainings-Bibliothek – Web-App für Übungen, Par-Timer und Ergebnisse",
+  "scripts": {
+    "test": "node tests/run-tests.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}

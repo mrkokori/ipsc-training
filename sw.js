@@ -2,7 +2,9 @@
 // Strategie: zuerst das Netz (damit Updates sofort ankommen), bei fehlendem
 // oder zu langsamem Netz die Version aus dem Cache. Nach dem ersten Öffnen
 // funktioniert die App damit auch ohne Empfang am Schießstand.
-const CACHE_NAME = "ipsc-training-v4";
+// Bei jeder Veröffentlichung hier UND in app.js (APP_VERSION) erhöhen.
+const VERSION = "2026.09.4";
+const CACHE_NAME = "ipsc-training-" + VERSION;
 const NETWORK_TIMEOUT_MS = 3000;
 const ASSETS = [
   "./",
@@ -30,6 +32,13 @@ self.addEventListener("activate", (event) => {
       Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
+});
+
+// Die App fragt nach der Version, um bei Abweichung einen Update-Hinweis zu zeigen
+self.addEventListener("message", (event) => {
+  if (event.data === "version" && event.source) {
+    event.source.postMessage({ type: "version", version: VERSION });
+  }
 });
 
 self.addEventListener("fetch", (event) => {

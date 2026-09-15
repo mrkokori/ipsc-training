@@ -3,12 +3,23 @@ let customDrills = [];
 let editedBuiltins = {};
 let deletedBuiltinIds = [];
 let scoreLogs = {};
+let favorites = new Set();
+
+// Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
+const APP_VERSION = "2026.09.4";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
 const DELETED_BUILTINS_KEY = "ipscDeletedBuiltins";
 const SCORE_LOG_KEY = "ipscScoreLogs";
 const STORAGE_WARNING_KEY = "ipscStorageWarningDismissedV2";
+const FAVORITES_KEY = "ipscFavorites";
+const SETTINGS_KEY = "ipscSettings";
+
+// Einstellungen
+const TIMER_DELAYS = { "2-4": "zufällig 2–4 s", "1-3": "zufällig 1–3 s", "3-3": "fest 3 s" };
+const DEFAULT_SETTINGS = { powerFactor: "minor", timerDelay: "2-4", timerReps: 1 };
+let settings = { ...DEFAULT_SETTINGS };
 
 // Erlaubte Werte für die Datenprüfung importierter/gespeicherter Trainings
 const TARGET_TYPES = ["paper", "steel", "popper", "pendler", "updown", "noshoot"];
@@ -24,7 +35,7 @@ const parTimer = { ctx: null, token: 0, timeouts: [], nodes: [], rafId: 0, wakeL
 const SHARE_HASH_PREFIX = "#t=";
 const MAX_SHARED_BYTES = 200000;
 
-const state = { category: "", difficulty: "", equipment: "" };
+const state = { category: "", difficulty: "", equipment: "", search: "", favoritesOnly: false };
 
 const grid = document.getElementById("drill-grid");
 const resultCount = document.getElementById("result-count");
@@ -98,6 +109,8 @@ async function init() {
   scoreLogs = sanitizeScoreLogs(rawScoreLogs);
   // Speichert nur, wenn sich etwas geändert hat (z.B. Neuberechnung alter Einträge ohne Miss-Abzug)
   if (JSON.stringify(scoreLogs) !== JSON.stringify(rawScoreLogs)) saveScoreLogs();
+  favorites = new Set(cleanArr(loadJSON(FAVORITES_KEY, []), 5000).filter(id => typeof id === "string"));
+  settings = sanitizeSettings(loadJSON(SETTINGS_KEY, {}));
   requestPersistentStorage();
   mergeDrills();
   populateFilters();
@@ -107,15 +120,26 @@ async function init() {
   catSelect.addEventListener("change", () => { state.category = catSelect.value; render(); });
   diffSelect.addEventListener("change", () => { state.difficulty = diffSelect.value; render(); });
   equipSelect.addEventListener("change", () => { state.equipment = equipSelect.value; render(); });
-  resetBtn.addEventListener("click", () => {
-    state.category = ""; state.difficulty = ""; state.equipment = "";
-    catSelect.value = ""; diffSelect.value = ""; equipSelect.value = "";
+  const searchInput = document.getElementById("filter-search");
+  const favFilterBtn = document.getElementById("filter-fav");
+  searchInput.addEventListener("input", () => { state.search = searchInput.value; render(); });
+  favFilterBtn.addEventListener("click", () => {
+    state.favoritesOnly = !state.favoritesOnly;
+    updateFavoriteFilterButton();
     render();
   });
+  resetBtn.addEventListener("click", () => {
+    state.category = ""; state.difficulty = ""; state.equipment = ""; state.search = ""; state.favoritesOnly = false;
+    catSelect.value = ""; diffSelect.value = ""; equipSelect.value = ""; searchInput.value = "";
+    updateFavoriteFilterButton();
+    render();
+  });
+  initSettingsDialog();
+  document.getElementById("update-reload-btn").addEventListener("click", () => location.reload());
   closeBtn.addEventListener("click", closeDetail);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) closeDetail(); });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { closeDetail(); closeCreate(); }
+    if (e.key === "Escape") { closeDetail(); closeCreate(); closeSettings(); }
   });
 
   addDrillBtn.addEventListener("click", openCreate);
@@ -146,6 +170,7 @@ async function init() {
   });
 
   handleSharedLinkFromUrl();
+  initServiceWorker();
 }
 
 // ---------- Storage helpers ----------
@@ -178,6 +203,111 @@ function requestPersistentStorage() {
   navigator.storage.persisted()
     .then(already => already || navigator.storage.persist())
     .catch(() => {});
+}
+
+// ---------- Favoriten ----------
+
+function saveFavorites() { saveJSON(FAVORITES_KEY, [...favorites]); }
+
+function isFavorite(id) { return favorites.has(id); }
+
+function toggleFavorite(id) {
+  if (favorites.has(id)) favorites.delete(id); else favorites.add(id);
+  saveFavorites();
+  render();
+}
+
+function updateFavoriteFilterButton() {
+  const btn = document.getElementById("filter-fav");
+  if (!btn) return;
+  btn.setAttribute("aria-pressed", state.favoritesOnly ? "true" : "false");
+  btn.textContent = state.favoritesOnly ? "★ Nur Favoriten" : "☆ Nur Favoriten";
+  btn.classList.toggle("active", state.favoritesOnly);
+}
+
+// ---------- Einstellungen ----------
+
+function sanitizeSettings(raw) {
+  const src = raw && typeof raw === "object" ? raw : {};
+  return {
+    powerFactor: src.powerFactor === "major" ? "major" : "minor",
+    timerDelay: Object.prototype.hasOwnProperty.call(TIMER_DELAYS, src.timerDelay) ? src.timerDelay : DEFAULT_SETTINGS.timerDelay,
+    timerReps: cleanInt(src.timerReps, DEFAULT_SETTINGS.timerReps, 1, 50)
+  };
+}
+
+function initSettingsDialog() {
+  const overlayEl = document.getElementById("settings-overlay");
+  document.getElementById("settings-btn").addEventListener("click", openSettings);
+  document.getElementById("settings-close").addEventListener("click", closeSettings);
+  document.getElementById("settings-cancel").addEventListener("click", closeSettings);
+  overlayEl.addEventListener("click", (e) => { if (e.target === overlayEl) closeSettings(); });
+  document.getElementById("settings-save").addEventListener("click", () => {
+    settings = sanitizeSettings({
+      powerFactor: document.getElementById("set-power").value,
+      timerDelay: document.getElementById("set-delay").value,
+      timerReps: document.getElementById("set-reps").value
+    });
+    saveJSON(SETTINGS_KEY, settings);
+    closeSettings();
+    showDbMsg("Einstellungen gespeichert.");
+  });
+}
+
+function openSettings() {
+  document.getElementById("set-power").value = settings.powerFactor;
+  document.getElementById("set-delay").value = settings.timerDelay;
+  document.getElementById("set-reps").value = settings.timerReps;
+  document.getElementById("settings-version").textContent = `App-Version ${APP_VERSION}`;
+  document.getElementById("settings-overlay").classList.remove("hidden");
+  lockBodyScroll();
+}
+
+function closeSettings() {
+  const overlayEl = document.getElementById("settings-overlay");
+  if (!overlayEl || overlayEl.classList.contains("hidden")) return;
+  overlayEl.classList.add("hidden");
+  unlockBodyScroll();
+}
+
+// ---------- Update-Hinweis ----------
+// Der Service Worker meldet seine Version. Weicht sie von der geladenen App ab
+// (z.B. weil die App aus dem Cache kam oder lange offen war), erscheint ein Hinweis.
+
+function initServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  const sw = navigator.serviceWorker;
+  sw.addEventListener("message", (event) => {
+    const data = event.data || {};
+    if (data.type === "version" && data.version && data.version !== APP_VERSION) showUpdateBanner();
+  });
+  const askVersion = () => { if (sw.controller) sw.controller.postMessage("version"); };
+  sw.addEventListener("controllerchange", askVersion);
+  const register = () => {
+    sw.register("sw.js").then((registration) => {
+      askVersion();
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) registration.update().catch(() => {});
+      });
+    }).catch(() => { /* ohne Offline-Cache geht die App trotzdem */ });
+  };
+  if (document.readyState === "complete") register(); else window.addEventListener("load", register);
+}
+
+function showUpdateBanner() {
+  const banner = document.getElementById("update-banner");
+  if (banner) banner.classList.remove("hidden");
+}
+
+// ---------- Suche ----------
+
+function normalizeSearch(text) {
+  return String(text || "").toLowerCase().replace(/ß/g, "ss").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function drillSearchText(drill) {
+  return normalizeSearch([drill.title, drill.category, drill.difficulty, drill.distance, drill.procedure, drill.focus,
+    ...(drill.equipment || [])].join(" "));
 }
 
 function newCustomId() {
@@ -409,12 +539,23 @@ function uniqueSorted(arr) {
 }
 
 function getFiltered() {
-  return DRILLS.filter(d => {
+  const terms = normalizeSearch(state.search).split(/\s+/).filter(Boolean);
+  const filtered = DRILLS.filter(d => {
     if (state.category && d.category !== state.category) return false;
     if (state.difficulty && d.difficulty !== state.difficulty) return false;
     if (state.equipment && !(d.equipment || []).includes(state.equipment)) return false;
+    if (state.favoritesOnly && !isFavorite(d.id)) return false;
+    if (terms.length) {
+      const haystack = drillSearchText(d);
+      if (!terms.every(t => haystack.includes(t))) return false;
+    }
     return true;
   });
+  // Favoriten zuerst, sonst Reihenfolge der Bibliothek beibehalten
+  return filtered
+    .map((d, i) => ({ d, i }))
+    .sort((a, b) => (isFavorite(b.d.id) - isFavorite(a.d.id)) || (a.i - b.i))
+    .map(x => x.d);
 }
 
 // ---------- Rendering the grid / cards ----------
@@ -429,7 +570,9 @@ function render() {
     empty.className = "no-results";
     empty.textContent = DRILLS.length === 0
       ? "Noch keine Trainings vorhanden. Klicke auf „+ Eigenes Training“, um dein erstes Training zu erstellen – oder importiere eine geteilte Datei von einem Kollegen."
-      : "Keine Trainings gefunden. Filter zurücksetzen und erneut versuchen.";
+      : state.favoritesOnly && favorites.size === 0
+        ? "Noch keine Favoriten. Tippe bei einem Training auf den Stern, um es hier zu sammeln."
+        : "Keine Trainings gefunden. Suche oder Filter anpassen bzw. zurücksetzen.";
     grid.appendChild(empty);
     return;
   }
@@ -443,7 +586,9 @@ function buildCard(drill) {
   const card = document.createElement("div");
   card.className = "drill-card";
   card.tabIndex = 0;
+  const fav = isFavorite(drill.id);
   card.innerHTML = `
+    <button type="button" class="fav-btn${fav ? " active" : ""}" aria-pressed="${fav}" aria-label="${fav ? "Favorit entfernen" : "Als Favorit markieren"}" title="Favorit">${fav ? "★" : "☆"}</button>
     <h3>${escapeHtml(drill.title)}</h3>
     <div class="drill-meta">
       <span class="badge">${escapeHtml(drill.category)}</span>
@@ -456,8 +601,12 @@ function buildCard(drill) {
       <span>${escapeHtml(drill.distance || "")}</span>
     </div>
   `;
+  card.querySelector(".fav-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleFavorite(drill.id);
+  });
   card.addEventListener("click", () => openDetail(drill));
-  card.addEventListener("keydown", (e) => { if (e.key === "Enter") openDetail(drill); });
+  card.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target === card) openDetail(drill); });
   return card;
 }
 
@@ -491,6 +640,11 @@ function openDetail(drill, options = {}) {
 
     <div class="section-title">Stage-Skizze</div>
     ${sketchHtml}
+    ${isValidSketchDataUrl(drill.sketchDataUrl) ? "" : `
+    <div class="sketch-actions">
+      <button type="button" class="tool-btn" id="sketch-image-btn">Skizze als Bild speichern</button>
+      <span class="sketch-msg" id="sketch-msg"></span>
+    </div>`}
 
     <div class="section-title">Ablauf</div>
     <div class="procedure-text">${escapeHtml(drill.procedure || "")}</div>
@@ -510,6 +664,8 @@ function openDetail(drill, options = {}) {
   if (!alreadyOpen) overlay.scrollTop = 0;
 
   initParTimer();
+  const sketchBtn = document.getElementById("sketch-image-btn");
+  if (sketchBtn) sketchBtn.addEventListener("click", () => saveSketchImage(drill));
 
   if (preview) {
     renderPreviewActions(drill);
@@ -521,11 +677,17 @@ function openDetail(drill, options = {}) {
 
 function renderDetailActions(drill) {
   const row = document.getElementById("action-row");
+  const fav = isFavorite(drill.id);
   row.innerHTML = `
+    <button type="button" class="tool-btn fav-toggle${fav ? " active" : ""}" id="fav-drill-btn" aria-pressed="${fav}">${fav ? "★ Favorit" : "☆ Favorit"}</button>
     <button type="button" class="edit-btn" id="edit-drill-btn">Bearbeiten</button>
     <button type="button" class="tool-btn" id="share-drill-btn">Teilen</button>
     <button type="button" class="delete-btn" id="delete-drill-btn">Löschen</button>
   `;
+  document.getElementById("fav-drill-btn").addEventListener("click", () => {
+    toggleFavorite(drill.id);
+    renderDetailActions(drill);
+  });
   document.getElementById("edit-drill-btn").addEventListener("click", () => { closeDetail(); openEdit(drill); });
   document.getElementById("share-drill-btn").addEventListener("click", () => toggleSharePanel(drill));
   document.getElementById("delete-drill-btn").addEventListener("click", () => {
@@ -632,34 +794,87 @@ function formatScoreDate(iso) {
   return d.toLocaleDateString("de-DE") + " " + d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
 }
 
-function sparklineSvg(values) {
-  const w = 320, h = 56, pad = 6;
-  const min = Math.min(...values), max = Math.max(...values);
-  const range = (max - min) || 1;
-  const stepX = values.length > 1 ? (w - pad * 2) / (values.length - 1) : 0;
-  const pts = values.map((v, i) => {
-    const x = pad + i * stepX;
-    const y = h - pad - ((v - min) / range) * (h - pad * 2);
-    return [x, y];
-  });
-  const line = pts.map(p => p.join(",")).join(" ");
-  const dots = pts.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="3" fill="#e8620c"/>`).join("");
-  return `
-  <svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none">
-    <rect x="0" y="0" width="${w}" height="${h}" fill="#0b0d10" rx="6"/>
-    <polyline points="${line}" fill="none" stroke="#e8620c" stroke-width="2"/>
-    ${dots}
-  </svg>`;
+function scoreStats(log, parSeconds) {
+  const hf = log.map(e => e.hitFactor);
+  const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  const aRate = entries => {
+    const shots = entries.reduce((sum, e) => sum + e.alpha + e.charlie + e.delta + (e.mike || 0), 0);
+    return shots ? entries.reduce((sum, e) => sum + e.alpha, 0) / shots : null;
+  };
+  const best = hf.length ? Math.max(...hf) : null;
+  return {
+    count: log.length,
+    best,
+    bestIndex: best === null ? -1 : hf.lastIndexOf(best),
+    avgLast5: avg(hf.slice(-5)),
+    avgPrev5: log.length >= 10 ? avg(hf.slice(-10, -5)) : null,
+    aRate: aRate(log),
+    aRateLast5: aRate(log.slice(-5)),
+    parHits: parSeconds ? log.filter(e => e.time <= parSeconds).length : null
+  };
 }
 
-function refreshScoreSection(drill) {
+function formatPercent(v) {
+  return v === null ? "–" : `${Math.round(v * 100)} %`;
+}
+
+function scoreChartSvg(log) {
+  const w = 340, h = 150, left = 34, right = 10, top = 12, bottom = 22;
+  const values = log.map(e => e.hitFactor);
+  const rolling = values.map((_, i) => {
+    const slice = values.slice(Math.max(0, i - 4), i + 1);
+    return slice.reduce((a, b) => a + b, 0) / slice.length;
+  });
+  const min = Math.min(...values, ...rolling), max = Math.max(...values, ...rolling);
+  const range = (max - min) || 1;
+  const x = i => left + (values.length > 1 ? i * (w - left - right) / (values.length - 1) : 0);
+  const y = v => top + (1 - (v - min) / range) * (h - top - bottom);
+  const line = arr => arr.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const bestIdx = values.lastIndexOf(Math.max(...values));
+  const shortDate = iso => { const d = new Date(iso); return `${d.getDate()}.${d.getMonth() + 1}.`; };
+  const dots = values.map((v, i) =>
+    `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${i === bestIdx ? 5 : 3}" fill="${i === bestIdx ? "#7fbf7f" : "#e8620c"}"/>`).join("");
+  return `
+  <svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="Verlauf des Hit-Factors">
+    <rect x="0" y="0" width="${w}" height="${h}" fill="#0b0d10" rx="6"/>
+    <line x1="${left}" y1="${top}" x2="${w - right}" y2="${top}" stroke="#1f232a"/>
+    <line x1="${left}" y1="${h - bottom}" x2="${w - right}" y2="${h - bottom}" stroke="#1f232a"/>
+    <text x="${left - 4}" y="${top + 4}" fill="#9aa3af" font-size="10" text-anchor="end">${max.toFixed(2)}</text>
+    <text x="${left - 4}" y="${h - bottom + 4}" fill="#9aa3af" font-size="10" text-anchor="end">${min.toFixed(2)}</text>
+    <text x="${left}" y="${h - 6}" fill="#9aa3af" font-size="10">${escapeXml(shortDate(log[0].date))}</text>
+    <text x="${w - right}" y="${h - 6}" fill="#9aa3af" font-size="10" text-anchor="end">${escapeXml(shortDate(log[log.length - 1].date))}</text>
+    ${values.length >= 3 ? `<polyline points="${line(rolling)}" fill="none" stroke="#7fb0e8" stroke-width="2" stroke-dasharray="5,4"/>` : ""}
+    <polyline points="${line(values)}" fill="none" stroke="#e8620c" stroke-width="2"/>
+    ${dots}
+  </svg>
+  <div class="chart-legend"><span class="legend-hf">Hit-Factor</span>${values.length >= 3 ? `<span class="legend-avg">Ø der letzten 5</span>` : ""}<span class="legend-best">Bestwert</span></div>`;
+}
+
+function refreshScoreSection(drill, notice = "") {
   const container = document.getElementById("score-section");
   if (!container) return;
   const log = getScoreLog(drill.id);
   const hasNoShoot = drillHasNoShoot(drill);
+  const par = parseParSeconds(drill.parTime);
+  const stats = scoreStats(log, par);
+
+  let trendHtml = "";
+  if (stats.avgPrev5 !== null) {
+    const diff = stats.avgLast5 - stats.avgPrev5;
+    const cls = diff > 0 ? "score-trend-up" : diff < 0 ? "score-trend-down" : "score-trend-flat";
+    trendHtml = `<span class="stat-trend ${cls}">${diff > 0 ? "▲" : diff < 0 ? "▼" : "–"} ${diff >= 0 ? "+" : ""}${diff.toFixed(2)} zu den 5 davor</span>`;
+  }
+  const statsHtml = log.length ? `
+    <div class="score-stats">
+      <div class="stat-box"><div class="label">Versuche</div><div class="value">${stats.count}</div></div>
+      <div class="stat-box"><div class="label">Bester Hit-Factor</div><div class="value">${stats.best.toFixed(2)}</div></div>
+      <div class="stat-box"><div class="label">Ø letzte 5</div><div class="value">${stats.avgLast5.toFixed(2)}</div>${trendHtml}</div>
+      <div class="stat-box"><div class="label">A-Quote gesamt / letzte 5</div><div class="value">${formatPercent(stats.aRate)} / ${formatPercent(stats.aRateLast5)}</div></div>
+      ${par ? `<div class="stat-box"><div class="label">Innerhalb Par (${escapeHtml(String(par))} s)</div><div class="value">${stats.parHits} von ${stats.count}</div></div>` : ""}
+    </div>` : "";
 
   const sparkline = log.length >= 2
-    ? `<div class="score-sparkline-wrap">${sparklineSvg(log.map(e => e.hitFactor))}</div>`
+    ? `<div class="score-chart-wrap">${scoreChartSvg(log)}</div>`
     : "";
 
   const rows = log.slice().reverse().map((entry, revIdx) => {
@@ -696,6 +911,7 @@ function refreshScoreSection(drill) {
     </div>` : `<p class="score-empty">Noch keine Versuche eingetragen.</p>`;
 
   container.innerHTML = `
+    ${statsHtml}
     ${sparkline}
     ${table}
     <div class="score-form">
@@ -709,12 +925,12 @@ function refreshScoreSection(drill) {
       <label class="score-field">
         <span>Power Factor</span>
         <select id="score-major">
-          <option value="0" selected>Minor</option>
-          <option value="1">Major</option>
+          <option value="0"${settings.powerFactor === "major" ? "" : " selected"}>Minor</option>
+          <option value="1"${settings.powerFactor === "major" ? " selected" : ""}>Major</option>
         </select>
       </label>
       <button type="button" class="tool-btn" id="score-add-btn">Eintragen</button>
-      <span class="score-result" id="score-live-result"></span>
+      <span class="score-result" id="score-live-result">${notice}</span>
     </div>
   `;
 
@@ -756,8 +972,14 @@ function refreshScoreSection(drill) {
     const pe = parseInt(proceduralInput.value, 10) || 0;
     const t = parseFloat(timeInput.value);
     if (!(a + c + d + m + ns > 0) || !(t > 0)) { alert("Bitte mindestens einen Treffer/Fehlschuss (A/C/D/M/NS) und eine Zeit (> 0 Sekunden) angeben."); return; }
+    const previousBest = log.length ? Math.max(...log.map(e => e.hitFactor)) : null;
     addScoreEntry(drill.id, a, c, d, m, ns, pe, t, majorSelect.value === "1");
-    refreshScoreSection(drill);
+    const newLog = getScoreLog(drill.id);
+    const added = newLog[newLog.length - 1];
+    const notice = previousBest !== null && added.hitFactor > previousBest
+      ? `<strong>Neuer Bestwert!</strong> Hit-Factor ${added.hitFactor.toFixed(4)}`
+      : `Eingetragen: Hit-Factor <strong>${added.hitFactor.toFixed(4)}</strong>`;
+    refreshScoreSection(drill, notice);
   });
 
   container.querySelectorAll(".score-del-btn").forEach(btn => {
@@ -789,17 +1011,17 @@ function parTimerHtml(drill) {
         <label class="score-field"><span>Par-Zeit (Sekunden)</span><input type="number" id="timer-par" step="0.1" min="0" max="600" inputmode="decimal" value="${par !== null ? escapeHtml(String(par)) : ""}" placeholder="ohne"></label>
         <label class="score-field"><span>Startverzögerung</span>
           <select id="timer-delay">
-            <option value="2-4" selected>zufällig 2–4 s</option>
-            <option value="1-3">zufällig 1–3 s</option>
-            <option value="3-3">fest 3 s</option>
+            ${Object.entries(TIMER_DELAYS).map(([value, label]) =>
+              `<option value="${value}"${value === settings.timerDelay ? " selected" : ""}>${label}</option>`).join("")}
           </select>
         </label>
-        <label class="score-field"><span>Durchgänge</span><input type="number" id="timer-reps" step="1" min="1" max="50" inputmode="numeric" value="1"></label>
+        <label class="score-field"><span>Durchgänge</span><input type="number" id="timer-reps" step="1" min="1" max="50" inputmode="numeric" value="${settings.timerReps}"></label>
       </div>
       <div class="timer-actions">
         <button type="button" class="save-btn timer-start" id="timer-start">Start</button>
         <button type="button" class="tool-btn" id="timer-stop" disabled>Stopp</button>
       </div>
+      <button type="button" class="tool-btn timer-to-score hidden" id="timer-to-score">Ergebnis eintragen ↓</button>
       <p class="timer-hint">Lautstärke hoch und am iPhone den Stummschalter ausschalten. Beim Trockentraining keine Munition im Raum.</p>
     </div>`;
 }
@@ -809,10 +1031,25 @@ function initParTimer() {
   const stopBtn = document.getElementById("timer-stop");
   if (!startBtn) return;
   startBtn.addEventListener("click", startParTimer);
+  document.getElementById("timer-to-score").addEventListener("click", jumpToScoreForm);
   stopBtn.addEventListener("click", () => {
     stopParTimer();
     setTimerText("Gestoppt", "Auf Start tippen", "");
   });
+}
+
+function setTimerToScoreVisible(visible) {
+  const btn = document.getElementById("timer-to-score");
+  // Nur anbieten, wenn es einen Ergebnis-Bereich gibt (nicht in der Vorschau geteilter Trainings)
+  if (btn) btn.classList.toggle("hidden", !visible || !document.getElementById("score-section"));
+}
+
+function jumpToScoreForm() {
+  const alpha = document.getElementById("score-alpha");
+  if (!alpha) return;
+  alpha.scrollIntoView({ behavior: "smooth", block: "center" });
+  alpha.focus({ preventScroll: true });
+  if (alpha.select) alpha.select();
 }
 
 function getAudioContext() {
@@ -885,6 +1122,7 @@ function startParTimer() {
   const [delayMin, delayMax] = document.getElementById("timer-delay").value.split("-").map(Number);
   const ctx = getAudioContext();
   const token = ++parTimer.token;
+  setTimerToScoreVisible(false);
   setTimerRunning(true);
   requestWakeLock();
 
@@ -941,6 +1179,7 @@ function finishParTimer(token) {
   timerLater(600, () => {
     if (token !== parTimer.token) return;
     setTimerRunning(false);
+    setTimerToScoreVisible(true);
     releaseWakeLock();
   });
 }
@@ -961,6 +1200,79 @@ function stopParTimer() {
   parTimer.nodes = [];
   releaseWakeLock();
   if (parTimer.running) setTimerRunning(false);
+}
+
+// ---------- Skizze als Bild ----------
+
+function buildSketchImageSvg(drill) {
+  const layout = drill.layout || {};
+  const w = layout.viewW || 400, h = layout.viewH || 500;
+  const header = 92, scale = 2;
+  const clip = (text, max) => text.length > max ? text.slice(0, max - 1) + "…" : text;
+  const info = [drill.distance, drill.rounds ? `${drill.rounds} Schuss` : "", drill.parTime ? `Par ${drill.parTime}` : ""]
+    .filter(Boolean).join(", ");
+  const font = "Segoe UI, Helvetica, Arial, sans-serif";
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w * scale}" height="${(h + header) * scale}" viewBox="0 0 ${w} ${h + header}">
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#8a92a0"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="${w}" height="${h + header}" fill="#0b0d10"/>
+  <text x="16" y="34" fill="#e9ebee" font-size="20" font-weight="700" font-family="${font}">${escapeXml(clip(drill.title || "", 34))}</text>
+  <text x="16" y="58" fill="#e8620c" font-size="13" font-family="${font}">${escapeXml(clip([drill.category, drill.difficulty].filter(Boolean).join(" – "), 50))}</text>
+  <text x="16" y="79" fill="#9aa3af" font-size="13" font-family="${font}">${escapeXml(clip(info, 55))}</text>
+  <g transform="translate(0, ${header})">${renderLayoutInner(layout)}</g>
+  <text x="${w - 10}" y="${h + header - 10}" fill="#5a6270" font-size="10" text-anchor="end" font-family="${font}">IPSC Trainings-Bibliothek</text>
+</svg>`;
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function saveSketchImage(drill) {
+  const msg = document.getElementById("sketch-msg");
+  const say = text => { if (msg) msg.textContent = text; };
+  const svg = buildSketchImageSvg(drill);
+  const baseName = "skizze-" + slugify(drill.title);
+  try {
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = reject;
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth || img.width;
+    canvas.height = img.naturalHeight || img.height;
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+    if (!blob) throw new Error("Kein Bild erzeugt");
+    const file = new File([blob], baseName + ".png", { type: "image/png" });
+    if (navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: drill.title });
+        say("Bild geteilt.");
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+      }
+    }
+    downloadBlob(blob, file.name);
+    say("Bild heruntergeladen.");
+  } catch (e) {
+    // Falls der Browser das Umwandeln in PNG nicht kann: Vektorgrafik speichern
+    downloadBlob(new Blob([svg], { type: "image/svg+xml" }), baseName + ".svg");
+    say("Als SVG-Grafik gespeichert (PNG wird von diesem Browser nicht unterstützt).");
+  }
 }
 
 // ---------- Teilen per Link / QR-Code ----------
@@ -1192,6 +1504,7 @@ function deleteDrill(drill) {
   if (drill.custom) {
     customDrills = customDrills.filter(d => d.id !== drill.id);
     saveCustomDrills();
+    if (favorites.delete(drill.id)) saveFavorites();
     // Ergebnisse gehören zum Training – sonst bleiben sie verwaist im Speicher.
     // (Bei Standard-Trainings bleiben sie erhalten, weil man diese wiederherstellen kann.)
     if (scoreLogs[drill.id]) {
@@ -1383,11 +1696,11 @@ function exportAll() {
     customDrills,
     editedBuiltins,
     deletedBuiltinIds,
-    ...(includeScores ? { scoreLogs } : {})
+    ...(includeScores ? { scoreLogs, favorites: [...favorites] } : {})
   };
   downloadJSON(JSON.stringify(payload, null, 2), "ipsc-training-export.json");
   showDbMsg(includeScores
-    ? "Export (inkl. eigener Zeiten) heruntergeladen."
+    ? "Export (inkl. eigener Zeiten und Favoriten) heruntergeladen."
     : "Export heruntergeladen – Datei an Kollegen weitergeben, die können sie importieren.");
 }
 
@@ -1489,6 +1802,14 @@ function importFile(file) {
           scoreLogs[key] = log;
         }
         saveScoreLogs();
+      }
+
+      if (Array.isArray(data.favorites)) {
+        for (const srcId of data.favorites) {
+          const key = typeof srcId === "string" ? (idMap[srcId] || (builtinIds.has(srcId) ? srcId : null)) : null;
+          if (key) favorites.add(key);
+        }
+        saveFavorites();
       }
 
       saveCustomDrills();

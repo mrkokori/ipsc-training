@@ -826,3 +826,123 @@ body.modal-open {
   margin: 0 40px 14px 0;
   font-size: 0.9rem;
 }
+
+/* ---------- Suche & Favoriten ---------- */
+.filter-search { flex: 2 1 240px; }
+
+.filter-search input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  width: 100%;
+}
+
+.filter-search input:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.fav-filter.active {
+  color: #f2c14e;
+  border-color: #7a6320;
+}
+
+.drill-card { position: relative; }
+.drill-card h3 { padding-right: 34px; }
+
+.fav-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+.fav-btn:hover, .fav-btn:focus-visible { color: var(--text); background: rgba(255,255,255,0.06); }
+.fav-btn.active, .fav-toggle.active { color: #f2c14e; }
+
+/* ---------- Einstellungen & Update ---------- */
+.settings-panel { max-width: 520px; }
+
+.form-field select { width: 100%; min-width: 0; }
+
+.settings-version {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  margin: 14px 0 0;
+}
+
+.update-banner {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.update-banner .save-btn { margin-left: auto; }
+
+/* ---------- Auswertung ---------- */
+.score-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.stat-trend {
+  display: block;
+  font-size: 0.75rem;
+  margin-top: 2px;
+}
+
+.score-chart-wrap { margin-bottom: 12px; }
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.chart-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  margin-right: 5px;
+  vertical-align: middle;
+  background: #e8620c;
+}
+
+.chart-legend .legend-avg::before { background: repeating-linear-gradient(90deg, #7fb0e8 0 5px, transparent 5px 8px); }
+.chart-legend .legend-best::before { width: 9px; height: 9px; border-radius: 50%; background: #7fbf7f; }
+
+/* ---------- Timer & Skizze ---------- */
+.timer-to-score {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.sketch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 4px;
+}
+
+.sketch-msg {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
