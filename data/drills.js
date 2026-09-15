@@ -178,7 +178,7 @@
       procedure: "Zwei Ziele, die jeweils teilweise von einem No-Shoot verdeckt sind. Aus dem Holster je zwei Schuss auf die sichtbaren Trefferzonen.",
       focus: "Genau zielen trotz Zeitdruck. Ein Treffer im No-Shoot kostet 10 Punkte, also das Tempo lieber leicht zurücknehmen.",
       layout: layout({
-        targets: [paper(120, 130, "T1"), noshoot(148, 100, "NS1"), paper(280, 130, "T2"), noshoot(252, 100, "NS2")],
+        targets: [paper(120, 140, "T1"), noshoot(152, 115, "NS1"), paper(280, 140, "T2"), noshoot(248, 115, "NS2")],
         shooterPositions: [shooter(200, 430)]
       })
     },
