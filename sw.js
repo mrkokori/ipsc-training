@@ -1,7 +1,7 @@
 // Offline cache for the IPSC Trainings-Bibliothek PWA.
 // Everything needed to run the app is cached on install, so it keeps working
 // with no signal at all once it has been opened at least once.
-const CACHE_NAME = "ipsc-training-v1";
+const CACHE_NAME = "ipsc-training-v2";
 const ASSETS = [
   "./",
   "index.html",

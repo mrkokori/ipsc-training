@@ -81,6 +81,7 @@ async function init() {
   editedBuiltins = loadJSON(EDITED_BUILTINS_KEY, {});
   deletedBuiltinIds = loadJSON(DELETED_BUILTINS_KEY, []);
   scoreLogs = loadJSON(SCORE_LOG_KEY, {});
+  if (recalcScoreLogs(scoreLogs)) saveScoreLogs();
   mergeDrills();
   populateFilters();
   updateRestoreButton();
@@ -387,21 +388,47 @@ function saveScoreLogs() { saveJSON(SCORE_LOG_KEY, scoreLogs); }
 
 function getScoreLog(drillId) { return scoreLogs[drillId] || []; }
 
-function calcIpscPoints(alpha, charlie, delta, noshoot, major) {
+// IPSC-Wertung: A=5, C=4/3, D=2/1 (Major/Minor).
+// Miss, No-Shoot und Procedural kosten je 10 Punkte.
+// Das Ergebnis kann nicht negativ werden (IPSC-Regel: minimal 0 Punkte).
+function calcIpscPoints(alpha, charlie, delta, mike, noshoot, procedural, major) {
   const raw = major
     ? alpha * 5 + charlie * 4 + delta * 2
     : alpha * 5 + charlie * 3 + delta * 1;
-  return raw - noshoot * 10;
+  const penalties = (mike + noshoot + procedural) * 10;
+  return Math.max(0, raw - penalties);
+}
+
+function calcHitFactor(points, time) {
+  return time > 0 ? Math.round((points / time) * 10000) / 10000 : 0;
+}
+
+// Berechnet Punkte und Hit-Factor aller gespeicherten Einträge neu.
+// Nötig, weil ältere Versionen Misses nicht abgezogen haben.
+function recalcScoreLogs(logs) {
+  let changed = false;
+  for (const entries of Object.values(logs || {})) {
+    for (const e of entries) {
+      const points = calcIpscPoints(e.alpha || 0, e.charlie || 0, e.delta || 0,
+        e.mike || 0, e.noshoot || 0, e.procedural || 0, !!e.major);
+      const hitFactor = calcHitFactor(points, e.time);
+      if (e.procedural === undefined) { e.procedural = 0; changed = true; }
+      if (e.points !== points || e.hitFactor !== hitFactor) {
+        e.points = points; e.hitFactor = hitFactor; changed = true;
+      }
+    }
+  }
+  return changed;
 }
 
 function drillHasNoShoot(drill) {
   return !!(drill.layout && drill.layout.targets && drill.layout.targets.some(t => t.type === "noshoot"));
 }
 
-function addScoreEntry(drillId, alpha, charlie, delta, mike, noshoot, time, major) {
-  const points = calcIpscPoints(alpha, charlie, delta, noshoot, major);
-  const hitFactor = time > 0 ? Math.round((points / time) * 10000) / 10000 : 0;
-  const entry = { date: new Date().toISOString(), alpha, charlie, delta, mike, noshoot, time, major, points, hitFactor };
+function addScoreEntry(drillId, alpha, charlie, delta, mike, noshoot, procedural, time, major) {
+  const points = calcIpscPoints(alpha, charlie, delta, mike, noshoot, procedural, major);
+  const hitFactor = calcHitFactor(points, time);
+  const entry = { date: new Date().toISOString(), alpha, charlie, delta, mike, noshoot, procedural, time, major, points, hitFactor };
   if (!scoreLogs[drillId]) scoreLogs[drillId] = [];
   scoreLogs[drillId].push(entry);
   saveScoreLogs();
@@ -464,6 +491,7 @@ function refreshScoreSection(drill) {
         <td>${entry.delta}</td>
         <td>${entry.mike || 0}</td>
         ${hasNoShoot ? `<td>${entry.noshoot || 0}</td>` : ""}
+        <td>${entry.procedural || 0}</td>
         <td>${entry.points}</td>
         <td>${entry.time.toFixed(2)} s</td>
         <td><strong>${entry.hitFactor.toFixed(4)}</strong></td>
@@ -475,7 +503,7 @@ function refreshScoreSection(drill) {
   const table = log.length > 0 ? `
     <div class="score-table-wrap">
     <table class="score-table">
-      <thead><tr><th>Datum</th><th>A</th><th>C</th><th>D</th><th>M</th>${hasNoShoot ? "<th>NS</th>" : ""}<th>Punkte</th><th>Zeit</th><th>Hit-Factor</th><th>Trend</th><th></th></tr></thead>
+      <thead><tr><th>Datum</th><th>A</th><th>C</th><th>D</th><th>M</th>${hasNoShoot ? "<th>NS</th>" : ""}<th>PE</th><th>Punkte</th><th>Zeit</th><th>Hit-Factor</th><th>Trend</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     </div>` : `<p class="score-empty">Noch keine Versuche eingetragen.</p>`;
@@ -489,6 +517,7 @@ function refreshScoreSection(drill) {
       <label class="score-field"><span>Delta</span><input type="number" id="score-delta" step="1" min="0" value="0"></label>
       <label class="score-field"><span>Mike</span><input type="number" id="score-mike" step="1" min="0" value="0"></label>
       ${hasNoShoot ? `<label class="score-field"><span>No-Shoot</span><input type="number" id="score-noshoot" step="1" min="0" value="0"></label>` : ""}
+      <label class="score-field"><span>Procedural</span><input type="number" id="score-procedural" step="1" min="0" value="0"></label>
       <label class="score-field"><span>Zeit (Sekunden)</span><input type="number" id="score-time" step="0.01" min="0.01"></label>
       <label class="score-field">
         <span>Power Factor</span>
@@ -507,6 +536,7 @@ function refreshScoreSection(drill) {
   const deltaInput = document.getElementById("score-delta");
   const mikeInput = document.getElementById("score-mike");
   const noshootInput = hasNoShoot ? document.getElementById("score-noshoot") : null;
+  const proceduralInput = document.getElementById("score-procedural");
   const timeInput = document.getElementById("score-time");
   const majorSelect = document.getElementById("score-major");
   const liveResult = document.getElementById("score-live-result");
@@ -515,16 +545,18 @@ function refreshScoreSection(drill) {
     const a = parseInt(alphaInput.value, 10) || 0;
     const c = parseInt(charlieInput.value, 10) || 0;
     const d = parseInt(deltaInput.value, 10) || 0;
+    const m = parseInt(mikeInput.value, 10) || 0;
     const ns = noshootInput ? (parseInt(noshootInput.value, 10) || 0) : 0;
+    const pe = parseInt(proceduralInput.value, 10) || 0;
     const t = parseFloat(timeInput.value);
-    const pts = calcIpscPoints(a, c, d, ns, majorSelect.value === "1");
+    const pts = calcIpscPoints(a, c, d, m, ns, pe, majorSelect.value === "1");
     if (t > 0) {
       liveResult.innerHTML = `${pts} Punkte – Hit-Factor: <strong>${(pts / t).toFixed(4)}</strong>`;
     } else {
       liveResult.textContent = pts !== 0 ? `${pts} Punkte – Zeit fehlt` : "";
     }
   };
-  [alphaInput, charlieInput, deltaInput, mikeInput, timeInput].forEach(el => el.addEventListener("input", updateLive));
+  [alphaInput, charlieInput, deltaInput, mikeInput, proceduralInput, timeInput].forEach(el => el.addEventListener("input", updateLive));
   if (noshootInput) noshootInput.addEventListener("input", updateLive);
   majorSelect.addEventListener("change", updateLive);
 
@@ -534,9 +566,10 @@ function refreshScoreSection(drill) {
     const d = parseInt(deltaInput.value, 10) || 0;
     const m = parseInt(mikeInput.value, 10) || 0;
     const ns = noshootInput ? (parseInt(noshootInput.value, 10) || 0) : 0;
+    const pe = parseInt(proceduralInput.value, 10) || 0;
     const t = parseFloat(timeInput.value);
     if (!(a + c + d + m + ns > 0) || !(t > 0)) { alert("Bitte mindestens einen Treffer/Fehlschuss (A/C/D/M/NS) und eine Zeit (> 0 Sekunden) angeben."); return; }
-    addScoreEntry(drill.id, a, c, d, m, ns, t, majorSelect.value === "1");
+    addScoreEntry(drill.id, a, c, d, m, ns, pe, t, majorSelect.value === "1");
     refreshScoreSection(drill);
   });
 
@@ -798,6 +831,7 @@ function importFile(file) {
             const key = idRemap[drillId] || drillId;
             scoreLogs[key] = [...(scoreLogs[key] || []), ...entries];
           }
+          recalcScoreLogs(scoreLogs);
           saveScoreLogs();
         }
         saveCustomDrills();
