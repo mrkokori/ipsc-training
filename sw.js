@@ -2,7 +2,7 @@
 // Strategie: zuerst das Netz (damit Updates sofort ankommen), bei fehlendem
 // oder zu langsamem Netz die Version aus dem Cache. Nach dem ersten Öffnen
 // funktioniert die App damit auch ohne Empfang am Schießstand.
-const CACHE_NAME = "ipsc-training-v3";
+const CACHE_NAME = "ipsc-training-v4";
 const NETWORK_TIMEOUT_MS = 3000;
 const ASSETS = [
   "./",
@@ -10,6 +10,7 @@ const ASSETS = [
   "style.css",
   "app.js",
   "data/drills.js",
+  "lib/qrcode.js",
   "manifest.json",
   "icon-192.png",
   "icon-512.png"

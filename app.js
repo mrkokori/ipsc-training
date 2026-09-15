@@ -15,6 +15,15 @@ const TARGET_TYPES = ["paper", "steel", "popper", "pendler", "updown", "noshoot"
 const PROP_TYPES = ["tisch", "sessel"];
 const SKETCH_DATA_URL_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
 
+// Par-Timer (Konstanten oben, weil init() beim Start schon darauf zugreift)
+const PAR_RESET_MS = 4000;       // Pause zwischen zwei Durchgängen
+const NO_PAR_RESET_MS = 8000;    // ohne Par-Zeit etwas mehr Zeit für die Übung
+const parTimer = { ctx: null, token: 0, timeouts: [], nodes: [], rafId: 0, wakeLock: null, running: false };
+
+// Teilen per Link
+const SHARE_HASH_PREFIX = "#t=";
+const MAX_SHARED_BYTES = 200000;
+
 const state = { category: "", difficulty: "", equipment: "" };
 
 const grid = document.getElementById("drill-grid");
@@ -118,6 +127,10 @@ async function init() {
   restoreBuiltinsBtn.addEventListener("click", restoreBuiltins);
   exportBtn.addEventListener("click", exportAll);
   importBtn.addEventListener("click", () => importFileInput.click());
+  const importLinkBtn = document.getElementById("import-link-btn");
+  if (importLinkBtn) importLinkBtn.addEventListener("click", importFromPastedLink);
+  window.addEventListener("hashchange", handleSharedLinkFromUrl);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) stopParTimer(); });
   importFileInput.addEventListener("change", () => {
     if (importFileInput.files[0]) importFile(importFileInput.files[0]);
     importFileInput.value = "";
@@ -131,6 +144,8 @@ async function init() {
     storageWarning.classList.add("hidden");
     localStorage.setItem(STORAGE_WARNING_KEY, "1");
   });
+
+  handleSharedLinkFromUrl();
 }
 
 // ---------- Storage helpers ----------
@@ -208,7 +223,10 @@ function isValidSketchDataUrl(v) {
 function sanitizeLayout(raw) {
   if (!raw || typeof raw !== "object") return emptyBuilderLayout();
   const isObj = o => o && typeof o === "object";
-  const pos = o => ({ x: cleanNum(o.x), y: cleanNum(o.y) });
+  // Koordinaten werden auf ganze Zahlen gerundet – optisch kein Unterschied,
+  // aber kürzere Teilen-Links und gleiche Trainings werden sicher als gleich erkannt.
+  const coord = v => Math.round(cleanNum(v));
+  const pos = o => ({ x: coord(o.x), y: coord(o.y) });
   const layout = {
     viewW: cleanNum(raw.viewW, 400, 50, 4000),
     viewH: cleanNum(raw.viewH, 500, 50, 4000),
@@ -219,15 +237,15 @@ function sanitizeLayout(raw) {
       ...pos(sp), facing: cleanNum(sp.facing, 0, 0, 359), label: cleanStr(sp.label, 40)
     })),
     walls: cleanArr(raw.walls).filter(isObj).map(w => ({
-      x1: cleanNum(w.x1), y1: cleanNum(w.y1), x2: cleanNum(w.x2), y2: cleanNum(w.y2)
+      x1: coord(w.x1), y1: coord(w.y1), x2: coord(w.x2), y2: coord(w.y2)
     })),
     boxes: cleanArr(raw.boxes).filter(isObj).map(b => ({
-      ...pos(b), w: cleanNum(b.w, 40, 1, 4000), h: cleanNum(b.h, 40, 1, 4000), label: cleanStr(b.label, 40)
+      ...pos(b), w: Math.round(cleanNum(b.w, 40, 1, 4000)), h: Math.round(cleanNum(b.h, 40, 1, 4000)), label: cleanStr(b.label, 40)
     })),
     props: cleanArr(raw.props).filter(pr => isObj(pr) && PROP_TYPES.includes(pr.type)).map(pr => ({
       ...pos(pr), type: pr.type, label: cleanStr(pr.label, 40)
     })),
-    path: cleanArr(raw.path).filter(Array.isArray).map(pt => [cleanNum(pt[0]), cleanNum(pt[1])])
+    path: cleanArr(raw.path).filter(Array.isArray).map(pt => [coord(pt[0]), coord(pt[1])])
   };
   if (isObj(raw.dotsGrid)) {
     const dg = raw.dotsGrid;
@@ -443,12 +461,17 @@ function buildCard(drill) {
   return card;
 }
 
-function openDetail(drill) {
+function openDetail(drill, options = {}) {
+  const preview = !!options.preview;
+  const alreadyOpen = !overlay.classList.contains("hidden");
+  stopParTimer();
+
   const sketchHtml = isValidSketchDataUrl(drill.sketchDataUrl)
     ? `<div class="sketch-img-wrap"><img src="${escapeHtml(drill.sketchDataUrl)}" alt="Stage-Skizze"></div>`
     : `<div class="layout-svg-wrap">${renderLayout(drill.layout || {})}</div>`;
 
   detailContent.innerHTML = `
+    ${preview ? `<div class="preview-banner">Geteiltes Training – noch nicht in deiner Bibliothek gespeichert.</div>` : ""}
     <h2>${escapeHtml(drill.title)}</h2>
     <div class="drill-meta">
       <span class="badge">${escapeHtml(drill.category)}</span>
@@ -472,57 +495,67 @@ function openDetail(drill) {
     <div class="section-title">Ablauf</div>
     <div class="procedure-text">${escapeHtml(drill.procedure || "")}</div>
 
-    <div class="section-title">Eigene Ergebnisse &amp; Hit-Factor</div>
-    <div id="score-section"></div>
+    <div class="section-title">Par-Timer</div>
+    ${parTimerHtml(drill)}
 
-    <div id="action-row" class="db-tools">
-      <button type="button" class="edit-btn" id="edit-drill-btn">Bearbeiten</button>
-      <button type="button" class="tool-btn" id="share-drill-btn">Teilen</button>
-      <button type="button" class="delete-btn" id="delete-drill-btn">Löschen</button>
-    </div>
+    ${preview ? "" : `
+    <div class="section-title">Eigene Ergebnisse &amp; Hit-Factor</div>
+    <div id="score-section"></div>`}
+
+    <div id="action-row" class="db-tools"></div>
+    <div id="share-panel" class="share-panel hidden"></div>
   `;
   overlay.classList.remove("hidden");
-  lockBodyScroll();
+  if (!alreadyOpen) lockBodyScroll();
+  if (!alreadyOpen) overlay.scrollTop = 0;
 
-  refreshScoreSection(drill);
+  initParTimer();
 
-  document.getElementById("edit-drill-btn").addEventListener("click", () => {
-    closeDetail();
-    openEdit(drill);
-  });
-  document.getElementById("share-drill-btn").addEventListener("click", () => shareDrill(drill));
+  if (preview) {
+    renderPreviewActions(drill);
+  } else {
+    refreshScoreSection(drill);
+    renderDetailActions(drill);
+  }
+}
 
-  const attachDeleteHandler = () => {
-    document.getElementById("delete-drill-btn").addEventListener("click", showDeleteConfirm);
-  };
-  const showDeleteConfirm = () => {
-    const row = document.getElementById("action-row");
+function renderDetailActions(drill) {
+  const row = document.getElementById("action-row");
+  row.innerHTML = `
+    <button type="button" class="edit-btn" id="edit-drill-btn">Bearbeiten</button>
+    <button type="button" class="tool-btn" id="share-drill-btn">Teilen</button>
+    <button type="button" class="delete-btn" id="delete-drill-btn">Löschen</button>
+  `;
+  document.getElementById("edit-drill-btn").addEventListener("click", () => { closeDetail(); openEdit(drill); });
+  document.getElementById("share-drill-btn").addEventListener("click", () => toggleSharePanel(drill));
+  document.getElementById("delete-drill-btn").addEventListener("click", () => {
+    const logCount = drill.custom ? getScoreLog(drill.id).length : 0;
     row.innerHTML = `
-      <span class="confirm-text">"${escapeHtml(drill.title)}" wirklich löschen?${drill.custom && getScoreLog(drill.id).length ? ` Die ${getScoreLog(drill.id).length} eingetragenen Ergebnisse werden ebenfalls gelöscht.` : ""}</span>
+      <span class="confirm-text">"${escapeHtml(drill.title)}" wirklich löschen?${logCount ? ` Die ${logCount} eingetragenen Ergebnisse werden ebenfalls gelöscht.` : ""}</span>
       <button type="button" class="delete-btn confirm-yes" id="confirm-delete-yes">Ja, löschen</button>
       <button type="button" class="tool-btn" id="confirm-delete-no">Abbrechen</button>
     `;
-    document.getElementById("confirm-delete-yes").addEventListener("click", () => {
-      deleteDrill(drill);
-      closeDetail();
-    });
-    document.getElementById("confirm-delete-no").addEventListener("click", () => {
-      row.innerHTML = `
-        <button type="button" class="edit-btn" id="edit-drill-btn">Bearbeiten</button>
-        <button type="button" class="tool-btn" id="share-drill-btn">Teilen</button>
-        <button type="button" class="delete-btn" id="delete-drill-btn">Löschen</button>
-      `;
-      document.getElementById("edit-drill-btn").addEventListener("click", () => { closeDetail(); openEdit(drill); });
-      document.getElementById("share-drill-btn").addEventListener("click", () => shareDrill(drill));
-      attachDeleteHandler();
-    });
-  };
-  attachDeleteHandler();
+    document.getElementById("confirm-delete-yes").addEventListener("click", () => { deleteDrill(drill); closeDetail(); });
+    document.getElementById("confirm-delete-no").addEventListener("click", () => renderDetailActions(drill));
+  });
+}
+
+function renderPreviewActions(drill) {
+  const row = document.getElementById("action-row");
+  row.innerHTML = `
+    <button type="button" class="save-btn" id="preview-add-btn">Zu meinen Trainings hinzufügen</button>
+    <button type="button" class="tool-btn" id="preview-discard-btn">Verwerfen</button>
+  `;
+  document.getElementById("preview-add-btn").addEventListener("click", () => addSharedDrill(drill));
+  document.getElementById("preview-discard-btn").addEventListener("click", closeDetail);
 }
 
 function closeDetail() {
+  stopParTimer();
+  clearSharedLinkFromUrl();
+  const wasOpen = !overlay.classList.contains("hidden");
   overlay.classList.add("hidden");
-  unlockBodyScroll();
+  if (wasOpen) unlockBodyScroll();
 }
 
 // iOS Safari rubber-bands the page behind a fixed overlay when the overlay's
@@ -733,6 +766,424 @@ function refreshScoreSection(drill) {
       refreshScoreSection(drill);
     });
   });
+}
+
+// ---------- Par-Timer ----------
+// Startsignal nach zufälliger Verzögerung und Signal bei Ablauf der Par-Zeit.
+// Die Töne werden über die Web-Audio-Uhr geplant, damit sie auch bei
+// ausgelastetem Handy zeitgenau kommen.
+
+
+function parseParSeconds(text) {
+  const m = String(text || "").replace(",", ".").match(/\d+(?:\.\d+)?/);
+  return m ? parseFloat(m[0]) : null;
+}
+
+function parTimerHtml(drill) {
+  const par = parseParSeconds(drill.parTime);
+  return `
+    <div class="timer" id="par-timer">
+      <div class="timer-display" id="timer-display" aria-live="polite">Bereit</div>
+      <div class="timer-sub" id="timer-sub">Auf Start tippen</div>
+      <div class="timer-settings">
+        <label class="score-field"><span>Par-Zeit (Sekunden)</span><input type="number" id="timer-par" step="0.1" min="0" max="600" inputmode="decimal" value="${par !== null ? escapeHtml(String(par)) : ""}" placeholder="ohne"></label>
+        <label class="score-field"><span>Startverzögerung</span>
+          <select id="timer-delay">
+            <option value="2-4" selected>zufällig 2–4 s</option>
+            <option value="1-3">zufällig 1–3 s</option>
+            <option value="3-3">fest 3 s</option>
+          </select>
+        </label>
+        <label class="score-field"><span>Durchgänge</span><input type="number" id="timer-reps" step="1" min="1" max="50" inputmode="numeric" value="1"></label>
+      </div>
+      <div class="timer-actions">
+        <button type="button" class="save-btn timer-start" id="timer-start">Start</button>
+        <button type="button" class="tool-btn" id="timer-stop" disabled>Stopp</button>
+      </div>
+      <p class="timer-hint">Lautstärke hoch und am iPhone den Stummschalter ausschalten. Beim Trockentraining keine Munition im Raum.</p>
+    </div>`;
+}
+
+function initParTimer() {
+  const startBtn = document.getElementById("timer-start");
+  const stopBtn = document.getElementById("timer-stop");
+  if (!startBtn) return;
+  startBtn.addEventListener("click", startParTimer);
+  stopBtn.addEventListener("click", () => {
+    stopParTimer();
+    setTimerText("Gestoppt", "Auf Start tippen", "");
+  });
+}
+
+function getAudioContext() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  try {
+    if (!parTimer.ctx) parTimer.ctx = new AC();
+    if (parTimer.ctx.state === "suspended") parTimer.ctx.resume();
+    return parTimer.ctx;
+  } catch (e) {
+    return null;
+  }
+}
+
+function scheduleBeep(ctx, at, duration, frequency) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "square";
+  osc.frequency.value = frequency;
+  gain.gain.setValueAtTime(0.0001, at);
+  gain.gain.exponentialRampToValueAtTime(0.8, at + 0.005);
+  gain.gain.setValueAtTime(0.8, at + duration - 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, at + duration);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(at);
+  osc.stop(at + duration + 0.02);
+  parTimer.nodes.push(osc);
+}
+
+function timerLater(ms, fn) {
+  parTimer.timeouts.push(setTimeout(fn, ms));
+}
+
+function vibrate(pattern) {
+  if (navigator.vibrate) { try { navigator.vibrate(pattern); } catch (e) { /* ignorieren */ } }
+}
+
+function setTimerText(main, sub, state) {
+  const display = document.getElementById("timer-display");
+  const subEl = document.getElementById("timer-sub");
+  const box = document.getElementById("par-timer");
+  if (display) display.textContent = main;
+  if (subEl) subEl.textContent = sub;
+  if (box) box.dataset.state = state || "";
+}
+
+function setTimerRunning(running) {
+  parTimer.running = running;
+  const startBtn = document.getElementById("timer-start");
+  const stopBtn = document.getElementById("timer-stop");
+  if (startBtn) startBtn.disabled = running;
+  if (stopBtn) stopBtn.disabled = !running;
+  ["timer-par", "timer-delay", "timer-reps"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = running;
+  });
+}
+
+async function requestWakeLock() {
+  try {
+    if (navigator.wakeLock) parTimer.wakeLock = await navigator.wakeLock.request("screen");
+  } catch (e) { /* nicht unterstützt oder abgelehnt */ }
+}
+
+function startParTimer() {
+  stopParTimer();
+  const par = cleanNum(document.getElementById("timer-par").value, 0, 0, 600);
+  const reps = cleanInt(document.getElementById("timer-reps").value, 1, 1, 50);
+  const [delayMin, delayMax] = document.getElementById("timer-delay").value.split("-").map(Number);
+  const ctx = getAudioContext();
+  const token = ++parTimer.token;
+  setTimerRunning(true);
+  requestWakeLock();
+
+  const runRep = (rep) => {
+    if (token !== parTimer.token) return;
+    const delay = delayMin + Math.random() * (delayMax - delayMin);
+    const repText = reps > 1 ? `Durchgang ${rep} von ${reps}` : "Warte auf das Signal";
+    setTimerText("Achtung …", repText, "armed");
+
+    if (ctx) {
+      const t0 = ctx.currentTime + delay;
+      scheduleBeep(ctx, t0, 0.35, 2600);
+      if (par > 0) {
+        scheduleBeep(ctx, t0 + par, 0.15, 2600);
+        scheduleBeep(ctx, t0 + par + 0.22, 0.15, 2600);
+      }
+    }
+
+    const startAt = performance.now() + delay * 1000;
+    timerLater(delay * 1000, () => {
+      if (token !== parTimer.token) return;
+      vibrate(200);
+      const tick = () => {
+        if (token !== parTimer.token) return;
+        const elapsed = Math.max(0, (performance.now() - startAt) / 1000);
+        setTimerText(`${elapsed.toFixed(2)} s`, par > 0 ? `Par ${par.toFixed(2)} s` : repText, "running");
+        parTimer.rafId = requestAnimationFrame(tick);
+      };
+      tick();
+    });
+
+    const endMs = (delay + par) * 1000;
+    timerLater(endMs, () => {
+      if (token !== parTimer.token) return;
+      cancelAnimationFrame(parTimer.rafId);
+      if (par > 0) vibrate([100, 80, 100]);
+      const main = par > 0 ? `${par.toFixed(2)} s` : "Los!";
+      if (rep < reps) {
+        setTimerText(main, `Nächster Durchgang gleich – zurück in die Startposition`, "done");
+        timerLater(par > 0 ? PAR_RESET_MS : NO_PAR_RESET_MS, () => runRep(rep + 1));
+      } else {
+        setTimerText(main, par > 0 ? "Par-Zeit abgelaufen – fertig" : "Startsignal gegeben – fertig", "done");
+        finishParTimer(token);
+      }
+    });
+  };
+
+  runRep(1);
+}
+
+function finishParTimer(token) {
+  if (token !== parTimer.token) return;
+  // Laufende Töne (Par-Doppelton) ausklingen lassen, dann aufräumen
+  timerLater(600, () => {
+    if (token !== parTimer.token) return;
+    setTimerRunning(false);
+    releaseWakeLock();
+  });
+}
+
+function releaseWakeLock() {
+  if (parTimer.wakeLock) {
+    parTimer.wakeLock.release().catch(() => {});
+    parTimer.wakeLock = null;
+  }
+}
+
+function stopParTimer() {
+  parTimer.token++;
+  parTimer.timeouts.forEach(clearTimeout);
+  parTimer.timeouts = [];
+  cancelAnimationFrame(parTimer.rafId);
+  parTimer.nodes.forEach(osc => { try { osc.stop(); } catch (e) { /* schon beendet */ } });
+  parTimer.nodes = [];
+  releaseWakeLock();
+  if (parTimer.running) setTimerRunning(false);
+}
+
+// ---------- Teilen per Link / QR-Code ----------
+// Das Training steckt komprimiert im Link (#t=...). Es gibt keinen Server:
+// Wer den Link öffnet, sieht das Training und kann es selbst speichern.
+
+
+function bytesToBase64Url(bytes) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlToBytes(str) {
+  const b64 = str.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((str.length + 3) % 4);
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function transformBytes(bytes, stream, maxBytes) {
+  const writer = stream.writable.getWriter();
+  const writing = writer.write(bytes).then(() => writer.close());
+  writing.catch(() => {}); // Fehler kommen über den Lesezweig an, nicht doppelt melden
+  const reader = stream.readable.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > maxBytes) throw new Error("zu groß");
+      chunks.push(value);
+    }
+  } catch (e) {
+    reader.cancel().catch(() => {});
+    throw e;
+  }
+  await writing;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) { out.set(c, offset); offset += c.length; }
+  return out;
+}
+
+// Leere Felder weglassen, damit der Link möglichst kurz wird
+function compactForLink(drill) {
+  const clean = sanitizeDrill(drill);
+  const out = {};
+  for (const [key, value] of Object.entries(clean)) {
+    if (value === "" || value === null || (Array.isArray(value) && value.length === 0)) continue;
+    if (key === "layout") {
+      const layout = {};
+      for (const [lk, lv] of Object.entries(value)) {
+        if (Array.isArray(lv) && lv.length === 0) continue;
+        if ((lk === "viewW" && lv === 400) || (lk === "viewH" && lv === 500)) continue;
+        layout[lk] = lv;
+      }
+      out.layout = layout;
+    } else {
+      out[key] = value;
+    }
+  }
+  delete out.sketchDataUrl; // Bilder wären für einen Link viel zu groß
+  return out;
+}
+
+async function buildShareLink(drill) {
+  const bytes = new TextEncoder().encode(JSON.stringify(compactForLink(drill)));
+  let prefix = "p", payload = bytes;
+  if (typeof CompressionStream === "function") {
+    try {
+      payload = await transformBytes(bytes, new CompressionStream("deflate-raw"), MAX_SHARED_BYTES);
+      prefix = "z";
+    } catch (e) { /* ohne Kompression weiter */ }
+  }
+  return location.origin + location.pathname + SHARE_HASH_PREFIX + prefix + bytesToBase64Url(payload);
+}
+
+async function decodeSharedHash(hash) {
+  const m = /#t=([zp])([A-Za-z0-9_-]+)$/.exec(hash || "");
+  if (!m) return null;
+  let bytes = base64UrlToBytes(m[2]);
+  if (bytes.length > MAX_SHARED_BYTES) throw new Error("Link zu lang");
+  if (m[1] === "z") {
+    if (typeof DecompressionStream !== "function") throw new Error("Browser zu alt");
+    bytes = await transformBytes(bytes, new DecompressionStream("deflate-raw"), MAX_SHARED_BYTES * 5);
+  }
+  return sanitizeDrill(JSON.parse(new TextDecoder().decode(bytes)));
+}
+
+function clearSharedLinkFromUrl() {
+  if (location.hash.startsWith(SHARE_HASH_PREFIX) && history.replaceState) {
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+}
+
+async function handleSharedLinkFromUrl() {
+  if (!location.hash.startsWith(SHARE_HASH_PREFIX)) return;
+  await openSharedDrill(location.hash);
+}
+
+async function openSharedDrill(hash) {
+  let drill;
+  try {
+    drill = await decodeSharedHash(hash);
+  } catch (e) {
+    drill = null;
+  }
+  if (!drill) {
+    clearSharedLinkFromUrl();
+    alert("Der Trainings-Link ist unvollständig oder beschädigt. Lass ihn dir bitte noch einmal schicken.");
+    return;
+  }
+  const fp = JSON.stringify(drill);
+  const existing = DRILLS.find(d => drillFingerprint(d) === fp);
+  if (existing) {
+    clearSharedLinkFromUrl();
+    showDbMsg(`"${drill.title}" ist bereits in deiner Bibliothek.`);
+    openDetail(existing);
+    return;
+  }
+  openDetail(drill, { preview: true });
+}
+
+function importFromPastedLink() {
+  const text = prompt("Geteilten Trainings-Link hier einfügen:");
+  if (!text) return;
+  const idx = text.indexOf(SHARE_HASH_PREFIX);
+  if (idx < 0) {
+    alert("Das ist kein Trainings-Link. Er muss „#t=“ enthalten.");
+    return;
+  }
+  openSharedDrill(text.slice(idx).trim());
+}
+
+function addSharedDrill(drill) {
+  const clean = sanitizeDrill(drill);
+  if (!clean) return;
+  const fp = JSON.stringify(clean);
+  let saved = customDrills.find(d => drillFingerprint(d) === fp);
+  if (!saved) {
+    saved = { ...clean, id: newCustomId(), custom: true };
+    customDrills.push(saved);
+    saveCustomDrills();
+  }
+  mergeDrills();
+  populateFilters();
+  updateRestoreButton();
+  render();
+  closeDetail();
+  showDbMsg(`"${clean.title}" wurde zu deinen Trainings hinzugefügt.`);
+  openDetail(DRILLS.find(d => d.id === saved.id));
+}
+
+function toggleSharePanel(drill) {
+  const panel = document.getElementById("share-panel");
+  if (!panel.classList.contains("hidden")) {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.innerHTML = `
+    <div class="share-options">
+      <button type="button" class="tool-btn" id="share-link-btn">Link teilen</button>
+      <button type="button" class="tool-btn" id="share-qr-btn">QR-Code zeigen</button>
+      <button type="button" class="tool-btn" id="share-file-btn">Als Datei</button>
+    </div>
+    <div id="share-output" class="share-output"></div>
+  `;
+  panel.classList.remove("hidden");
+  const output = document.getElementById("share-output");
+
+  const showLinkField = (link, note) => {
+    output.innerHTML = `
+      <p class="share-note">${escapeHtml(note)}</p>
+      <input type="text" class="share-link-field" readonly value="${escapeHtml(link)}" aria-label="Trainings-Link">
+    `;
+    const field = output.querySelector(".share-link-field");
+    field.addEventListener("focus", () => field.select());
+  };
+
+  document.getElementById("share-link-btn").addEventListener("click", async () => {
+    const link = await buildShareLink(drill);
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: drill.title, text: `IPSC-Training: ${drill.title}`, url: link });
+        showLinkField(link, "Link geteilt. Du kannst ihn hier auch kopieren:");
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+      }
+    }
+    let copied = false;
+    try {
+      if (navigator.clipboard) { await navigator.clipboard.writeText(link); copied = true; }
+    } catch (e) { /* Kopieren nicht erlaubt */ }
+    showLinkField(link, copied ? "Link in die Zwischenablage kopiert:" : "Link zum Kopieren:");
+  });
+
+  document.getElementById("share-qr-btn").addEventListener("click", async () => {
+    const link = await buildShareLink(drill);
+    if (typeof qrcode !== "function") {
+      showLinkField(link, "QR-Code ist gerade nicht verfügbar. Hier ist der Link:");
+      return;
+    }
+    try {
+      const qr = qrcode(0, "L");
+      qr.addData(link);
+      qr.make();
+      output.innerHTML = `
+        <div class="qr-wrap">${qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true })}</div>
+        <p class="share-note">Mit der Handykamera scannen, um das Training zu öffnen.</p>
+      `;
+    } catch (e) {
+      showLinkField(link, "Das Training ist zu umfangreich für einen QR-Code. Teile stattdessen den Link:");
+    }
+  });
+
+  document.getElementById("share-file-btn").addEventListener("click", () => shareDrill(drill));
 }
 
 // ---------- Create / edit / delete drills ----------

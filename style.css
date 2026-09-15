@@ -710,3 +710,119 @@ body.modal-open {
   .db-tools { margin: -4px 0 16px; }
   .db-tools .tool-btn { flex: 1 1 auto; }
 }
+
+/* ---------- Par-Timer ---------- */
+.timer {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 8px;
+}
+
+.timer-display {
+  font-size: clamp(2.6rem, 12vw, 4rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  text-align: center;
+  color: var(--text);
+}
+
+.timer[data-state="armed"] .timer-display { color: var(--text-dim); }
+.timer[data-state="running"] .timer-display { color: var(--accent); }
+.timer[data-state="done"] .timer-display { color: #7fbf7f; }
+
+.timer-sub {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  margin: 4px 0 14px;
+  min-height: 1.2em;
+}
+
+.timer-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.timer-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.timer-actions .timer-start {
+  flex: 1;
+  margin-top: 0;
+  padding-top: 14px;
+  padding-bottom: 14px;
+  font-size: 1.05rem;
+}
+
+.timer-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.timer-hint {
+  margin: 10px 0 0;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+/* ---------- Teilen ---------- */
+.share-panel {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.share-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.share-output:empty { display: none; }
+.share-output { margin-top: 12px; }
+
+.share-note {
+  margin: 0 0 8px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.share-link-field {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.qr-wrap {
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px;
+  width: min(280px, 100%);
+  margin: 0 auto 8px;
+}
+
+.qr-wrap svg { display: block; width: 100%; height: auto; }
+
+.preview-banner {
+  background: rgba(97, 156, 232, 0.12);
+  border: 1px solid #2c4a6e;
+  color: #a9c8ee;
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin: 0 40px 14px 0;
+  font-size: 0.9rem;
+}
