@@ -8,7 +8,12 @@ const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
 const DELETED_BUILTINS_KEY = "ipscDeletedBuiltins";
 const SCORE_LOG_KEY = "ipscScoreLogs";
-const STORAGE_WARNING_KEY = "ipscStorageWarningDismissed";
+const STORAGE_WARNING_KEY = "ipscStorageWarningDismissedV2";
+
+// Erlaubte Werte für die Datenprüfung importierter/gespeicherter Trainings
+const TARGET_TYPES = ["paper", "steel", "popper", "pendler", "updown", "noshoot"];
+const PROP_TYPES = ["tisch", "sessel"];
+const SKETCH_DATA_URL_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
 
 const state = { category: "", difficulty: "", equipment: "" };
 
@@ -77,11 +82,14 @@ const DRAG_HINT = " Bereits gesetzte Elemente kannst du direkt anfassen und vers
 init();
 
 async function init() {
-  customDrills = loadJSON(CUSTOM_STORAGE_KEY, []);
-  editedBuiltins = loadJSON(EDITED_BUILTINS_KEY, {});
-  deletedBuiltinIds = loadJSON(DELETED_BUILTINS_KEY, []);
-  scoreLogs = loadJSON(SCORE_LOG_KEY, {});
-  if (recalcScoreLogs(scoreLogs)) saveScoreLogs();
+  customDrills = sanitizeStoredCustomDrills(loadJSON(CUSTOM_STORAGE_KEY, []));
+  editedBuiltins = sanitizeStoredEditedBuiltins(loadJSON(EDITED_BUILTINS_KEY, {}));
+  deletedBuiltinIds = cleanArr(loadJSON(DELETED_BUILTINS_KEY, []), 5000).filter(id => typeof id === "string");
+  const rawScoreLogs = loadJSON(SCORE_LOG_KEY, {});
+  scoreLogs = sanitizeScoreLogs(rawScoreLogs);
+  // Speichert nur, wenn sich etwas geändert hat (z.B. Neuberechnung alter Einträge ohne Miss-Abzug)
+  if (JSON.stringify(scoreLogs) !== JSON.stringify(rawScoreLogs)) saveScoreLogs();
+  requestPersistentStorage();
   mergeDrills();
   populateFilters();
   updateRestoreButton();
@@ -147,6 +155,169 @@ function saveJSON(key, value) {
 function saveCustomDrills() { saveJSON(CUSTOM_STORAGE_KEY, customDrills); }
 function saveEditedBuiltins() { saveJSON(EDITED_BUILTINS_KEY, editedBuiltins); }
 function saveDeletedBuiltins() { saveJSON(DELETED_BUILTINS_KEY, deletedBuiltinIds); }
+
+// Bittet den Browser, die gespeicherten Daten nicht automatisch zu löschen.
+// Wird still ignoriert, wenn der Browser das nicht unterstützt oder ablehnt.
+function requestPersistentStorage() {
+  if (!(navigator.storage && navigator.storage.persist)) return;
+  navigator.storage.persisted()
+    .then(already => already || navigator.storage.persist())
+    .catch(() => {});
+}
+
+function newCustomId() {
+  return "custom-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+}
+
+// ---------- Datenprüfung ----------
+// Alles, was aus localStorage oder aus einer Import-Datei kommt, wird hier auf
+// erlaubte Felder und Datentypen reduziert. Damit kann eine manipulierte
+// JSON-Datei keinen Code in die Seite einschleusen (Zahlen landen z.B.
+// ungeprüft in SVG-Attributen).
+
+// (Erlaubte Typen stehen oben bei den Konstanten, weil init() sie schon beim Start braucht.)
+
+function cleanStr(v, max = 5000) {
+  if (typeof v === "string") return v.slice(0, max);
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return "";
+}
+
+function cleanNum(v, fallback = 0, min = -10000, max = 10000) {
+  const n = typeof v === "string" && v.trim() === "" ? NaN : Number(v);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+function cleanInt(v, fallback = 0, min = 0, max = 100000) {
+  const n = cleanNum(v, NaN, min, max);
+  return Number.isFinite(n) ? Math.round(n) : fallback;
+}
+
+function cleanArr(v, max = 500) {
+  return Array.isArray(v) ? v.slice(0, max) : [];
+}
+
+function cleanId(v) {
+  return typeof v === "string" && v.length > 0 && v.length <= 200 ? v : null;
+}
+
+function isValidSketchDataUrl(v) {
+  return typeof v === "string" && v.length < 5000000 && SKETCH_DATA_URL_RE.test(v);
+}
+
+function sanitizeLayout(raw) {
+  if (!raw || typeof raw !== "object") return emptyBuilderLayout();
+  const isObj = o => o && typeof o === "object";
+  const pos = o => ({ x: cleanNum(o.x), y: cleanNum(o.y) });
+  const layout = {
+    viewW: cleanNum(raw.viewW, 400, 50, 4000),
+    viewH: cleanNum(raw.viewH, 500, 50, 4000),
+    targets: cleanArr(raw.targets).filter(t => isObj(t) && TARGET_TYPES.includes(t.type)).map(t => ({
+      ...pos(t), type: t.type, label: cleanStr(t.label, 40), ...(t.headZone ? { headZone: true } : {})
+    })),
+    shooterPositions: cleanArr(raw.shooterPositions).filter(isObj).map(sp => ({
+      ...pos(sp), facing: cleanNum(sp.facing, 0, 0, 359), label: cleanStr(sp.label, 40)
+    })),
+    walls: cleanArr(raw.walls).filter(isObj).map(w => ({
+      x1: cleanNum(w.x1), y1: cleanNum(w.y1), x2: cleanNum(w.x2), y2: cleanNum(w.y2)
+    })),
+    boxes: cleanArr(raw.boxes).filter(isObj).map(b => ({
+      ...pos(b), w: cleanNum(b.w, 40, 1, 4000), h: cleanNum(b.h, 40, 1, 4000), label: cleanStr(b.label, 40)
+    })),
+    props: cleanArr(raw.props).filter(pr => isObj(pr) && PROP_TYPES.includes(pr.type)).map(pr => ({
+      ...pos(pr), type: pr.type, label: cleanStr(pr.label, 40)
+    })),
+    path: cleanArr(raw.path).filter(Array.isArray).map(pt => [cleanNum(pt[0]), cleanNum(pt[1])])
+  };
+  if (isObj(raw.dotsGrid)) {
+    const dg = raw.dotsGrid;
+    layout.dotsGrid = {
+      x: cleanNum(dg.x), y: cleanNum(dg.y),
+      rows: cleanInt(dg.rows, 1, 1, 20), cols: cleanInt(dg.cols, 1, 1, 20),
+      spacing: cleanNum(dg.spacing, 30, 1, 500), r: cleanNum(dg.r, 10, 1, 100)
+    };
+  }
+  return layout;
+}
+
+// Liefert nur die inhaltlichen Felder eines Trainings (ohne id/custom) – oder
+// null, wenn Titel oder Kategorie fehlen.
+function sanitizeDrill(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const title = cleanStr(raw.title, 200).trim();
+  const category = cleanStr(raw.category, 100).trim();
+  if (!title || !category) return null;
+  const drill = {
+    title,
+    category,
+    difficulty: cleanStr(raw.difficulty, 100),
+    equipment: cleanArr(raw.equipment, 50).filter(e => typeof e === "string").map(e => e.slice(0, 100)),
+    rounds: cleanInt(raw.rounds, null, 0, 10000),
+    distance: cleanStr(raw.distance, 100),
+    parTime: cleanStr(raw.parTime, 100),
+    procedure: cleanStr(raw.procedure),
+    focus: cleanStr(raw.focus, 500),
+    layout: sanitizeLayout(raw.layout)
+  };
+  if (raw.courseType) drill.courseType = cleanStr(raw.courseType, 100);
+  if (isValidSketchDataUrl(raw.sketchDataUrl)) drill.sketchDataUrl = raw.sketchDataUrl;
+  return drill;
+}
+
+// Inhaltlicher "Fingerabdruck" – gleiche Trainings werden beim Import erkannt.
+function drillFingerprint(drill) {
+  const clean = sanitizeDrill(drill);
+  return clean ? JSON.stringify(clean) : "";
+}
+
+function sanitizeStoredCustomDrills(list) {
+  return cleanArr(list, 5000).map(d => {
+    const clean = sanitizeDrill(d);
+    return clean ? { ...clean, id: cleanId(d.id) || newCustomId(), custom: true } : null;
+  }).filter(Boolean);
+}
+
+function sanitizeStoredEditedBuiltins(map) {
+  const result = {};
+  if (!map || typeof map !== "object" || Array.isArray(map)) return result;
+  for (const [id, d] of Object.entries(map)) {
+    const clean = cleanId(id) && sanitizeDrill(d);
+    if (clean) result[id] = { ...clean, id, custom: false, builtinEdited: true };
+  }
+  return result;
+}
+
+function sanitizeScoreEntry(e) {
+  if (!e || typeof e !== "object") return null;
+  const time = cleanNum(e.time, 0, 0, 100000);
+  if (!(time > 0)) return null;
+  const date = typeof e.date === "string" && !isNaN(Date.parse(e.date)) ? e.date : new Date(0).toISOString();
+  const hits = k => cleanInt(e[k], 0, 0, 1000);
+  const entry = {
+    date,
+    alpha: hits("alpha"), charlie: hits("charlie"), delta: hits("delta"),
+    mike: hits("mike"), noshoot: hits("noshoot"), procedural: hits("procedural"),
+    time, major: !!e.major
+  };
+  entry.points = calcIpscPoints(entry.alpha, entry.charlie, entry.delta, entry.mike, entry.noshoot, entry.procedural, entry.major);
+  entry.hitFactor = calcHitFactor(entry.points, entry.time);
+  return entry;
+}
+
+function sanitizeScoreLogs(logs) {
+  const result = {};
+  if (!logs || typeof logs !== "object" || Array.isArray(logs)) return result;
+  for (const [drillId, entries] of Object.entries(logs)) {
+    if (!cleanId(drillId)) continue;
+    const clean = cleanArr(entries, 10000).map(sanitizeScoreEntry).filter(Boolean);
+    if (clean.length) result[drillId] = clean;
+  }
+  return result;
+}
+
+function scoreEntryKey(e) {
+  return [e.date, e.alpha, e.charlie, e.delta, e.mike, e.noshoot, e.procedural, e.time, e.major].join("|");
+}
 
 function mergeDrills() {
   const deletedSet = new Set(deletedBuiltinIds);
@@ -263,7 +434,7 @@ function buildCard(drill) {
       ${drill.builtinEdited ? `<span class="badge builtin-edited">Bearbeitet</span>` : ""}
     </div>
     <div class="drill-stats">
-      <span>${drill.rounds ? drill.rounds + " Schuss" : ""}</span>
+      <span>${drill.rounds ? escapeHtml(String(drill.rounds)) + " Schuss" : ""}</span>
       <span>${escapeHtml(drill.distance || "")}</span>
     </div>
   `;
@@ -273,8 +444,8 @@ function buildCard(drill) {
 }
 
 function openDetail(drill) {
-  const sketchHtml = drill.sketchDataUrl
-    ? `<div class="sketch-img-wrap"><img src="${drill.sketchDataUrl}" alt="Stage-Skizze"></div>`
+  const sketchHtml = isValidSketchDataUrl(drill.sketchDataUrl)
+    ? `<div class="sketch-img-wrap"><img src="${escapeHtml(drill.sketchDataUrl)}" alt="Stage-Skizze"></div>`
     : `<div class="layout-svg-wrap">${renderLayout(drill.layout || {})}</div>`;
 
   detailContent.innerHTML = `
@@ -288,7 +459,7 @@ function openDetail(drill) {
     </div>
 
     <div class="detail-grid">
-      <div class="stat-box"><div class="label">Schusszahl</div><div class="value">${drill.rounds || "–"}</div></div>
+      <div class="stat-box"><div class="label">Schusszahl</div><div class="value">${escapeHtml(String(drill.rounds || "–"))}</div></div>
       <div class="stat-box"><div class="label">Distanz</div><div class="value">${escapeHtml(drill.distance || "–")}</div></div>
       <div class="stat-box"><div class="label">Par-Zeit / Ziel</div><div class="value">${escapeHtml(drill.parTime || "–")}</div></div>
       <div class="stat-box"><div class="label">Fokus</div><div class="value">${escapeHtml(drill.focus || "–")}</div></div>
@@ -327,7 +498,7 @@ function openDetail(drill) {
   const showDeleteConfirm = () => {
     const row = document.getElementById("action-row");
     row.innerHTML = `
-      <span class="confirm-text">"${escapeHtml(drill.title)}" wirklich löschen?</span>
+      <span class="confirm-text">"${escapeHtml(drill.title)}" wirklich löschen?${drill.custom && getScoreLog(drill.id).length ? ` Die ${getScoreLog(drill.id).length} eingetragenen Ergebnisse werden ebenfalls gelöscht.` : ""}</span>
       <button type="button" class="delete-btn confirm-yes" id="confirm-delete-yes">Ja, löschen</button>
       <button type="button" class="tool-btn" id="confirm-delete-no">Abbrechen</button>
     `;
@@ -403,23 +574,6 @@ function calcHitFactor(points, time) {
   return time > 0 ? Math.round((points / time) * 10000) / 10000 : 0;
 }
 
-// Berechnet Punkte und Hit-Factor aller gespeicherten Einträge neu.
-// Nötig, weil ältere Versionen Misses nicht abgezogen haben.
-function recalcScoreLogs(logs) {
-  let changed = false;
-  for (const entries of Object.values(logs || {})) {
-    for (const e of entries) {
-      const points = calcIpscPoints(e.alpha || 0, e.charlie || 0, e.delta || 0,
-        e.mike || 0, e.noshoot || 0, e.procedural || 0, !!e.major);
-      const hitFactor = calcHitFactor(points, e.time);
-      if (e.procedural === undefined) { e.procedural = 0; changed = true; }
-      if (e.points !== points || e.hitFactor !== hitFactor) {
-        e.points = points; e.hitFactor = hitFactor; changed = true;
-      }
-    }
-  }
-  return changed;
-}
 
 function drillHasNoShoot(drill) {
   return !!(drill.layout && drill.layout.targets && drill.layout.targets.some(t => t.type === "noshoot"));
@@ -587,6 +741,12 @@ function deleteDrill(drill) {
   if (drill.custom) {
     customDrills = customDrills.filter(d => d.id !== drill.id);
     saveCustomDrills();
+    // Ergebnisse gehören zum Training – sonst bleiben sie verwaist im Speicher.
+    // (Bei Standard-Trainings bleiben sie erhalten, weil man diese wiederherstellen kann.)
+    if (scoreLogs[drill.id]) {
+      delete scoreLogs[drill.id];
+      saveScoreLogs();
+    }
   } else {
     if (!deletedBuiltinIds.includes(drill.id)) deletedBuiltinIds.push(drill.id);
     delete editedBuiltins[drill.id];
@@ -756,7 +916,11 @@ function downloadJSON(content, filename) {
 }
 
 function slugify(str) {
-  return String(str).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "training";
+  return String(str).toLowerCase()
+    .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "training";
 }
 
 function exportAll() {
@@ -805,57 +969,111 @@ async function shareDrill(drill) {
 }
 
 function importFile(file) {
+  if (file.size > 20 * 1024 * 1024) {
+    alert("Die Datei ist zu groß für einen Trainings-Import (maximal 20 MB).");
+    return;
+  }
   const reader = new FileReader();
   reader.onload = () => {
+    let data;
     try {
-      const data = JSON.parse(reader.result);
+      data = JSON.parse(reader.result);
+    } catch (e) {
+      alert("Import fehlgeschlagen: Die Datei ist keine gültige JSON-Datei.");
+      return;
+    }
+    if (!data || typeof data !== "object") {
+      alert("Unbekanntes Dateiformat – das ist keine IPSC-Trainings-Export-Datei.");
+      return;
+    }
 
-      if (data.type === "ipsc-training-export") {
-        const incoming = data.customDrills || [];
-        const existingIds = new Set(customDrills.map(d => d.id));
-        const idRemap = {};
-        for (const d of incoming) {
-          const clone = { ...d, custom: true };
-          if (!clone.id || existingIds.has(clone.id)) {
-            const newId = "custom-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
-            if (d.id) idRemap[d.id] = newId;
-            clone.id = newId;
-          }
-          existingIds.add(clone.id);
-          customDrills.push(clone);
+    const builtinIds = new Set((window.IPSC_DRILLS || []).map(d => d.id));
+
+    if (data.type === "ipsc-training-export") {
+      const fingerprints = new Map(customDrills.map(d => [drillFingerprint(d), d.id]));
+      const existingIds = new Set(customDrills.map(d => d.id));
+      const idMap = {}; // ID in der Datei -> ID in dieser App
+      let added = 0, duplicates = 0, invalid = 0, keptLocalEdits = 0, scoresAdded = 0;
+
+      for (const raw of cleanArr(data.customDrills, 5000)) {
+        const clean = sanitizeDrill(raw);
+        if (!clean) { invalid++; continue; }
+        const fp = JSON.stringify(clean);
+        const srcId = raw && cleanId(raw.id);
+        if (fingerprints.has(fp)) {
+          // Gleiches Training ist schon da: nicht doppelt anlegen, Ergebnisse aber zuordnen
+          if (srcId) idMap[srcId] = fingerprints.get(fp);
+          duplicates++;
+          continue;
         }
-        editedBuiltins = { ...editedBuiltins, ...(data.editedBuiltins || {}) };
-        deletedBuiltinIds = [...new Set([...deletedBuiltinIds, ...(data.deletedBuiltinIds || [])])];
-        if (data.scoreLogs) {
-          for (const [drillId, entries] of Object.entries(data.scoreLogs)) {
-            const key = idRemap[drillId] || drillId;
-            scoreLogs[key] = [...(scoreLogs[key] || []), ...entries];
-          }
-          recalcScoreLogs(scoreLogs);
-          saveScoreLogs();
-        }
-        saveCustomDrills();
-        saveEditedBuiltins();
-        saveDeletedBuiltins();
-        showDbMsg(`${incoming.length} Training(s) importiert.`);
-      } else if (data.type === "ipsc-training-drill" && data.drill) {
-        const clone = { ...data.drill, custom: true, id: "custom-" + Date.now() };
-        customDrills.push(clone);
-        saveCustomDrills();
-        showDbMsg(`"${clone.title}" importiert.`);
-      } else {
-        alert("Unbekanntes Dateiformat – das ist keine IPSC-Trainings-Export-Datei.");
-        return;
+        const id = srcId && !existingIds.has(srcId) ? srcId : newCustomId();
+        customDrills.push({ ...clean, id, custom: true });
+        existingIds.add(id);
+        fingerprints.set(fp, id);
+        if (srcId) idMap[srcId] = id;
+        added++;
       }
 
-      mergeDrills();
-      populateFilters();
-      updateRestoreButton();
-      render();
-    } catch (e) {
-      alert("Import fehlgeschlagen: Datei ist kein gültiges Trainings-Export-Format.");
+      // Bearbeitete Standard-Trainings: eigene Bearbeitungen haben Vorrang.
+      // Löschungen aus fremden Dateien werden bewusst nicht übernommen.
+      const incomingEdits = data.editedBuiltins && typeof data.editedBuiltins === "object" ? data.editedBuiltins : {};
+      for (const [id, raw] of Object.entries(incomingEdits)) {
+        if (!builtinIds.has(id)) continue;
+        if (editedBuiltins[id]) { keptLocalEdits++; continue; }
+        const clean = sanitizeDrill(raw);
+        if (clean) editedBuiltins[id] = { ...clean, id, custom: false, builtinEdited: true };
+      }
+
+      if (data.scoreLogs) {
+        for (const [srcId, entries] of Object.entries(sanitizeScoreLogs(data.scoreLogs))) {
+          const key = idMap[srcId] || (builtinIds.has(srcId) ? srcId : null);
+          if (!key) continue; // Ergebnisse ohne zugehöriges Training nicht übernehmen
+          const log = scoreLogs[key] || [];
+          const seen = new Set(log.map(scoreEntryKey));
+          for (const entry of entries) {
+            const k = scoreEntryKey(entry);
+            if (!seen.has(k)) { log.push(entry); seen.add(k); scoresAdded++; }
+          }
+          log.sort((a, b) => a.date.localeCompare(b.date));
+          scoreLogs[key] = log;
+        }
+        saveScoreLogs();
+      }
+
+      saveCustomDrills();
+      saveEditedBuiltins();
+
+      const parts = [`${added} Training(s) importiert`];
+      if (duplicates) parts.push(`${duplicates} bereits vorhanden (übersprungen)`);
+      if (invalid) parts.push(`${invalid} ungültig (ohne Titel/Kategorie)`);
+      if (scoresAdded) parts.push(`${scoresAdded} Ergebnis(se) übernommen`);
+      if (keptLocalEdits) parts.push(`${keptLocalEdits} eigene Bearbeitung(en) beibehalten`);
+      showDbMsg(parts.join(", ") + ".");
+    } else if (data.type === "ipsc-training-drill" && data.drill) {
+      const clean = sanitizeDrill(data.drill);
+      if (!clean) {
+        alert("Import fehlgeschlagen: Dem Training fehlen Titel oder Kategorie.");
+        return;
+      }
+      const fp = JSON.stringify(clean);
+      if (customDrills.some(d => drillFingerprint(d) === fp)) {
+        showDbMsg(`"${clean.title}" ist bereits vorhanden und wurde nicht erneut importiert.`);
+        return;
+      }
+      customDrills.push({ ...clean, id: newCustomId(), custom: true });
+      saveCustomDrills();
+      showDbMsg(`"${clean.title}" importiert.`);
+    } else {
+      alert("Unbekanntes Dateiformat – das ist keine IPSC-Trainings-Export-Datei.");
+      return;
     }
+
+    mergeDrills();
+    populateFilters();
+    updateRestoreButton();
+    render();
   };
+  reader.onerror = () => alert("Die Datei konnte nicht gelesen werden.");
   reader.readAsText(file);
 }
 
