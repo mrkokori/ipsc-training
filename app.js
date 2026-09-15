@@ -6,7 +6,7 @@ let scoreLogs = {};
 let favorites = new Set();
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.4";
+const APP_VERSION = "2026.09.5";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -25,6 +25,21 @@ let settings = { ...DEFAULT_SETTINGS };
 const TARGET_TYPES = ["paper", "steel", "popper", "pendler", "updown", "noshoot"];
 const PROP_TYPES = ["tisch", "sessel"];
 const SKETCH_DATA_URL_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/]+=*$/;
+
+// Zielsymbole (oben, weil die Werkzeugleiste schon beim Start gezeichnet wird)
+const TARGET_TAN = "#c79c71";
+const TARGET_STROKE = "#111111";
+const STEEL_BLUE = "#5dc9f8";
+const ICON_STROKE = "#111111";
+
+// Maße eines Papierziels in der Skizze (halbe Breite / halbe Höhe)
+const TARGET_HW = 22;
+const TARGET_HH = 25;
+
+// Umrisse als Anteile von halber Breite (x) und halber Höhe (y), abgenommen vom Stagebook-Symbol
+const TARGET_OUTLINE = [[-0.34, -1], [0.34, -1], [1, -0.34], [1, 0.34], [0.34, 1], [-0.34, 1], [-1, 0.34], [-1, -0.34]];
+const TARGET_C_ZONE = [[-0.36, -1], [-0.63, -0.34], [-0.63, 0.15], [-0.22, 0.57], [0.22, 0.57], [0.63, 0.15], [0.63, -0.34], [0.36, -1]];
+const TARGET_A_ZONE = [[-0.12, -0.89], [-0.32, -0.36], [-0.32, 0], [-0.12, 0.23], [0.12, 0.23], [0.32, 0], [0.32, -0.36], [0.12, -0.89]];
 
 // Par-Timer (Konstanten oben, weil init() beim Start schon darauf zugreift)
 const PAR_RESET_MS = 4000;       // Pause zwischen zwei Durchgängen
@@ -1862,6 +1877,11 @@ function initBuilder() {
   if (!builderSvg) return;
 
   document.querySelectorAll(".tool-select").forEach(btn => {
+    const icon = toolIconSvg(btn.dataset.tool);
+    if (icon) {
+      btn.textContent = btn.textContent.replace("⬤", "").trim();
+      btn.insertAdjacentHTML("afterbegin", `<span class="tool-icon" aria-hidden="true">${icon}</span>`);
+    }
     btn.addEventListener("click", () => {
       document.querySelectorAll(".tool-select").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
@@ -2163,88 +2183,64 @@ function escapeXml(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function ipscTargetOctagon(cx, cy, hw, hh, chamfer) {
-  const pts = [
-    [cx - hw + chamfer, cy - hh], [cx + hw - chamfer, cy - hh],
-    [cx + hw, cy - hh + chamfer], [cx + hw, cy + hh - chamfer],
-    [cx + hw - chamfer, cy + hh], [cx - hw + chamfer, cy + hh],
-    [cx - hw, cy + hh - chamfer], [cx - hw, cy - hh + chamfer]
-  ];
-  return pts.map(p => p.join(",")).join(" ");
-}
 
-// Real IPSC target look: tan silhouette with nested A/C-zone outlines
-const TARGET_TAN = "#d9b98a";
-const TARGET_STROKE = "#4a2f18";
-const CLUB_CYAN = "#00cdff";
-const ICON_STROKE = "#000";
+// Zielsymbole im Stil der IPSC-Stagebeschreibungen:
+// braunes Achteck mit C- und A-Zone, hellblauer Popper und hellblaue Plate,
+// jeweils mit schwarzer Kontur.
+// (Farben und Umrisse der Zielsymbole stehen oben bei den Konstanten.)
 
-function ipscInnerZone(cx, cy, hw, hh, chamfer) {
-  // A/C-zone outline: flat chamfered top, straight sides, converging to a point at the bottom
-  const pts = [
-    [cx - hw + chamfer, cy - hh], [cx + hw - chamfer, cy - hh],
-    [cx + hw, cy - hh + chamfer], [cx + hw, cy + hh * 0.35],
-    [cx, cy + hh], [cx - hw, cy + hh * 0.35],
-    [cx - hw, cy - hh + chamfer]
-  ];
-  return pts.map(p => p.join(",")).join(" ");
+function shapePoints(shape, cx, cy, hw = TARGET_HW, hh = TARGET_HH) {
+  return shape.map(([nx, ny]) => `${+(cx + nx * hw).toFixed(2)},${+(cy + ny * hh).toFixed(2)}`).join(" ");
 }
 
 function targetZonesSvg(cx, cy) {
-  // outer silhouette + two nested zone outlines (C-zone, A-zone) — matches the
-  // real IPSC target diagram look
-  const bodyPts = ipscTargetOctagon(cx, cy, 20, 32, 8);
-  const cZonePts = ipscInnerZone(cx, cy - 3, 14, 27, 6);
-  const aZonePts = ipscInnerZone(cx, cy - 5, 8, 20, 4);
   return `
-    <polygon points="${bodyPts}" fill="${TARGET_TAN}" stroke="${TARGET_STROKE}" stroke-width="2"/>
-    <polygon points="${cZonePts}" fill="none" stroke="${TARGET_STROKE}" stroke-width="1.3"/>
-    <polygon points="${aZonePts}" fill="none" stroke="${TARGET_STROKE}" stroke-width="1.3"/>`;
+    <polygon points="${shapePoints(TARGET_OUTLINE, cx, cy)}" fill="${TARGET_TAN}" stroke="${TARGET_STROKE}" stroke-width="1.5" stroke-linejoin="round"/>
+    <polygon points="${shapePoints(TARGET_C_ZONE, cx, cy)}" fill="none" stroke="${TARGET_STROKE}" stroke-width="0.85" stroke-linejoin="round"/>
+    <polygon points="${shapePoints(TARGET_A_ZONE, cx, cy)}" fill="none" stroke="${TARGET_STROKE}" stroke-width="0.85" stroke-linejoin="round"/>`;
+}
+
+function plateSvg(cx, cy) {
+  return `<circle cx="${cx}" cy="${cy}" r="12" fill="${STEEL_BLUE}" stroke="${ICON_STROKE}" stroke-width="1"/>`;
+}
+
+function popperSvg(cx, cy) {
+  // Runder Kopf, darunter ein nach unten schmaler werdender Körper mit gerader Standfläche
+  const rx = 11, ry = 8.5, headCy = cy - 14.5;
+  const neckHw = 7.3, footHw = 5.6, footY = cy + 23;
+  const neckY = headCy + ry * Math.sqrt(1 - (neckHw / rx) ** 2);
+  const f = v => +v.toFixed(2);
+  return `<path d="M ${f(cx - neckHw)} ${f(neckY)} A ${rx} ${ry} 0 1 1 ${f(cx + neckHw)} ${f(neckY)} L ${f(cx + footHw)} ${f(footY)} L ${f(cx - footHw)} ${f(footY)} Z" fill="${STEEL_BLUE}" stroke="${ICON_STROKE}" stroke-width="1" stroke-linejoin="round"/>`;
 }
 
 function targetEl(t) {
-  const label = textEl(t.x, t.y + 42, t.label, "#8a92a0", 11);
+  const labelAt = dy => textEl(t.x, t.y + dy, t.label, "#8a92a0", 11);
 
-  if (t.type === "steel") {
-    // stagebook "plate" icon: plain cyan disc
-    return `<circle cx="${t.x}" cy="${t.y}" r="16" fill="${CLUB_CYAN}" stroke="${ICON_STROKE}" stroke-width="2"/>` + label;
-  }
+  if (t.type === "steel") return plateSvg(t.x, t.y) + labelAt(26);
 
-  if (t.type === "popper") {
-    // stagebook "popper" icon: keyhole shape (round head, tapered body, flat rounded base)
-    return `
-      <path d="M ${t.x - 13} ${t.y - 8}
-               A 13 13 0 1 1 ${t.x + 13} ${t.y - 8}
-               L ${t.x + 12} ${t.y + 26}
-               Q ${t.x + 12} ${t.y + 32} ${t.x + 6} ${t.y + 32}
-               L ${t.x - 6} ${t.y + 32}
-               Q ${t.x - 12} ${t.y + 32} ${t.x - 12} ${t.y + 26}
-               Z"
-            fill="${CLUB_CYAN}" stroke="${ICON_STROKE}" stroke-width="2"/>` + label;
-  }
+  if (t.type === "popper") return popperSvg(t.x, t.y) + labelAt(37);
 
   if (t.type === "noshoot") {
-    // stagebook convention: a No-Shoot is the same target silhouette, plain white, no scoring zone
-    const pts = ipscTargetOctagon(t.x, t.y, 20, 32, 8);
-    return `<polygon points="${pts}" fill="#f5f3ee" stroke="${ICON_STROKE}" stroke-width="2"/>` + label;
+    // No-Shoot: gleiche Silhouette, weiß und ohne Trefferzonen
+    return `<polygon points="${shapePoints(TARGET_OUTLINE, t.x, t.y)}" fill="#f5f3ee" stroke="${ICON_STROKE}" stroke-width="1.5" stroke-linejoin="round"/>` + labelAt(39);
   }
 
   if (t.type === "pendler") {
-    // swinger: standard target icon plus a dashed swing arc with motion arrows
-    const armY = t.y - 34;
+    // Pendler: Papierziel mit gestrichelter Schwungbahn
+    const arcY = t.y - 20;
     return `
       <g>
-        <path d="M ${t.x - 40} ${armY + 14} A 42 42 0 0 1 ${t.x + 40} ${armY + 14}" fill="none" stroke="#8a92a0" stroke-width="1.5" stroke-dasharray="4,3"/>
-        <circle cx="${t.x - 40}" cy="${armY + 14}" r="2.5" fill="#8a92a0"/>
-        <circle cx="${t.x + 40}" cy="${armY + 14}" r="2.5" fill="#8a92a0"/>
-        <line x1="${t.x}" y1="${armY - 20}" x2="${t.x}" y2="${t.y - 32}" stroke="#5a6270" stroke-width="2"/>
+        <path d="M ${t.x - 40} ${arcY} A 42 42 0 0 1 ${t.x + 40} ${arcY}" fill="none" stroke="#8a92a0" stroke-width="1.5" stroke-dasharray="4,3"/>
+        <circle cx="${t.x - 40}" cy="${arcY}" r="2.5" fill="#8a92a0"/>
+        <circle cx="${t.x + 40}" cy="${arcY}" r="2.5" fill="#8a92a0"/>
+        <line x1="${t.x}" y1="${t.y - 50}" x2="${t.x}" y2="${t.y - TARGET_HH}" stroke="#5a6270" stroke-width="2"/>
         ${targetZonesSvg(t.x, t.y)}
-      </g>` + label;
+      </g>` + labelAt(39);
   }
 
   if (t.type === "updown") {
-    // up-down (drop) target: standard target icon plus an up/down arrow badge
-    const ax = t.x + 26, ay = t.y - 4;
+    // Up-Down-Ziel: Papierziel mit Pfeil nach oben und unten
+    const ax = t.x + 30, ay = t.y;
     return `
       <g>
         ${targetZonesSvg(t.x, t.y)}
@@ -2253,19 +2249,25 @@ function targetEl(t) {
           <path d="M ${ax - 4} ${ay - 9} L ${ax} ${ay - 15} L ${ax + 4} ${ay - 9}"/>
           <path d="M ${ax - 4} ${ay + 9} L ${ax} ${ay + 15} L ${ax + 4} ${ay + 9}"/>
         </g>
-      </g>` + label;
+      </g>` + labelAt(39);
   }
 
-  // real IPSC target: chamfered tan octagon with nested C-zone and A-zone outlines
-  let headZone = "";
-  if (t.headZone) {
-    headZone = `<circle cx="${t.x}" cy="${t.y - 40}" r="11" fill="${TARGET_TAN}" stroke="${TARGET_STROKE}" stroke-width="1.5"/>`;
-  }
-  return `
-    <g>
-      ${headZone}
-      ${targetZonesSvg(t.x, t.y)}
-    </g>` + label;
+  // Papierziel
+  const headZone = t.headZone
+    ? `<circle cx="${t.x}" cy="${t.y - TARGET_HH - 10}" r="10" fill="${TARGET_TAN}" stroke="${TARGET_STROKE}" stroke-width="1.5"/>`
+    : "";
+  return `<g>${headZone}${targetZonesSvg(t.x, t.y)}</g>` + labelAt(39);
+}
+
+// Kleine Symbole für die Werkzeugleiste des Skizzen-Editors
+function toolIconSvg(tool) {
+  const icons = {
+    target: `<svg viewBox="-26 -28 52 56">${targetZonesSvg(0, 0)}</svg>`,
+    steel: `<svg viewBox="-15 -15 30 30">${plateSvg(0, 0)}</svg>`,
+    popper: `<svg viewBox="-15 -25 30 50">${popperSvg(0, 0)}</svg>`,
+    noshoot: `<svg viewBox="-26 -28 52 56"><polygon points="${shapePoints(TARGET_OUTLINE, 0, 0)}" fill="#f5f3ee" stroke="${ICON_STROKE}" stroke-width="2.5"/></svg>`
+  };
+  return icons[tool] || "";
 }
 
 function propEl(p) {
