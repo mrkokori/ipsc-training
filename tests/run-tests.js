@@ -393,6 +393,7 @@ async function testMatches() {
   const stored = JSON.parse(w.localStorage.getItem("ipscMatches"));
   ok(stored.length === 1 && stored[0].stages.length === 2 && stored[0].division === "Production", "Match mit 2 Stages gespeichert");
   ok(/Wo die Punkte verloren gehen/.test($("#match-content").textContent) && $$(".loss-row").length === 5, "Auswertung mit Punktverlust-Balken");
+  ok($(".loss-bar span").dataset.barWidth.endsWith("%") && $(".loss-bar span").style.width.endsWith("%"), "Punktverlust-Balken transportieren die Breite über data-bar-width statt über ein style=\"\"-Attribut (CSP: style-src 'self' ohne unsafe-inline), und die Breite wird trotzdem per JS gesetzt");
   ok($$(".score-table tbody tr")[0].textContent.includes("Stage 2"), "schwächste Stage steht oben");
   ok($$(".advice-drill").length >= 1 && /Misses/.test($("#match-content").textContent), "Empfehlung passt zum größten Verlust (Misses)");
   $$(".stage-sketch")[0].click();
@@ -420,6 +421,7 @@ async function testPlans() {
   let { w, E, $, $$ } = boot();
   $("#plans-btn").click();
   ok($$(".plan-item").length === 3, "drei Vorlagen vorhanden");
+  ok($(".plan-progress span").dataset.barWidth.endsWith("%") && $(".plan-progress span").style.width.endsWith("%"), "Plan-Fortschrittsbalken transportieren die Breite über data-bar-width statt über ein style=\"\"-Attribut (CSP: style-src 'self' ohne unsafe-inline), und die Breite wird trotzdem per JS gesetzt");
   const missingDrills = E("BUILTIN_PLANS").flatMap((pl) => pl.days.flatMap((d) => d.items.map((it) => it.drillId))).filter((id) => !E("DRILLS").some((d) => d.id === id));
   ok(missingDrills.length === 0, "alle Übungen der Vorlagen existieren");
   $$(".plan-item")[0].click();
@@ -455,6 +457,49 @@ async function testPlans() {
   ok(JSON.parse(w.localStorage.getItem("ipscPlans")).length === 0, "eigenen Plan löschen");
   E("closePlans")();
   ok(E("bodyScrollLockCount") === 0, "Scroll-Sperre nach Plänen aufgehoben");
+}
+
+async function testStats() {
+  section("Statistik");
+  let { w, E, $ } = boot();
+  $("#stats-btn").click();
+  ok(!$("#stats-overlay").classList.contains("hidden"), "Statistik öffnet sich");
+  ok(/Noch keine Trainingsdaten erfasst/.test($("#stats-content").textContent), "leerer Zustand zeigt Hinweis");
+  E("closeStats")();
+  ok(E("bodyScrollLockCount") === 0, "Scroll-Sperre nach Statistik aufgehoben (leer)");
+
+  const statsScoreLogs = {
+    "std-el-presidente": [
+      { date: "2026-05-01T10:00:00.000Z", alpha: 7, charlie: 3, delta: 0, mike: 0, noshoot: 0, procedural: 0, time: 6.2, major: false, points: 44, hitFactor: 7.1 },
+      { date: "2026-06-01T10:00:00.000Z", alpha: 8, charlie: 2, delta: 0, mike: 0, noshoot: 0, procedural: 0, time: 6, major: false, points: 46, hitFactor: 7.6 }
+    ],
+    "std-bill-drill": [
+      { date: "2026-07-10T10:00:00.000Z", alpha: 5, charlie: 1, delta: 0, mike: 0, noshoot: 0, procedural: 0, time: 3, major: false, points: 28, hitFactor: 9.3 }
+    ]
+  };
+  const statsSessions = [
+    { id: "s1", date: "2026-05-01", type: "live", location: "Verein", rounds: 40, minutes: 60, drillIds: ["std-el-presidente"], notes: "" },
+    { id: "s2", date: "2026-06-01", type: "live", location: "Verein", rounds: 50, minutes: 60, drillIds: ["std-el-presidente"], notes: "" },
+    { id: "s3", date: "2026-07-10", type: "dry", location: "", rounds: 0, minutes: 20, drillIds: ["std-bill-drill"], notes: "" }
+  ];
+  const statsMatches = [{ id: "m1", name: "Vienna Open", date: "2026-06-15", division: "", major: false, notes: "", stages: [] }];
+  ({ w, E, $ } = boot({ storage: { ipscScoreLogs: statsScoreLogs, ipscSessions: statsSessions, ipscMatches: statsMatches } }));
+  $("#stats-btn").click();
+  const values = [...w.document.querySelectorAll("#stats-content .stat-box .value")].map((el) => el.textContent);
+  ok(values.join(",") === "3,90,3,1", "Übersichtskarten: Einheiten/Munition/Ergebnisse/Matches stimmen");
+  ok(/A-Quote im Verlauf/.test($("#stats-content").textContent) && $("#stats-content svg"), "A-Quote-Verlauf wird gezeichnet, wenn genug Ergebnisse da sind");
+  ok(/Mai 2026/.test($("#stats-content").textContent) && /Jun 2026/.test($("#stats-content").textContent) && /Jul 2026/.test($("#stats-content").textContent), "Trainingshäufigkeit zeigt die Monate mit Einheiten");
+  ok(/El Presidente/.test($("#stats-content").textContent) && /Bill Drill/.test($("#stats-content").textContent), "meistgeübte Übungen werden gelistet");
+  ok(/Zielwechsel/.test($("#stats-content").textContent), "Kategorie-Verteilung wird gelistet");
+  ok($(".loss-bar span").dataset.barWidth.endsWith("%"), "Statistik-Balken transportieren die Breite über data-bar-width statt über ein style=\"\"-Attribut (CSP: style-src 'self' ohne unsafe-inline)");
+  ok($(".loss-bar span").style.width.endsWith("%"), "Balkenbreite wird per JS gesetzt (data-bar-width → style.width)");
+  E("closeStats")();
+  ok(E("bodyScrollLockCount") === 0, "Scroll-Sperre nach Statistik aufgehoben (mit Daten)");
+
+  // Nur ein Ergebnis: A-Quote-Verlauf wird nicht gezeichnet (Chart braucht mindestens 2)
+  ({ w, E, $ } = boot({ storage: { ipscScoreLogs: { "std-bill-drill": statsScoreLogs["std-bill-drill"] } } }));
+  $("#stats-btn").click();
+  ok(!/A-Quote im Verlauf/.test($("#stats-content").textContent) && !$("#stats-content svg"), "A-Quote-Verlauf bleibt bei nur einem Ergebnis aus");
 }
 
 async function testMicrophone() {
@@ -779,7 +824,7 @@ function testLicenseFiles() {
 }
 
 (async () => {
-  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testBriefingJournalPrint, testShotPlan, testStageEditor, testMatches, testPlans, testMicrophone, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
+  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testBriefingJournalPrint, testShotPlan, testStageEditor, testMatches, testPlans, testStats, testMicrophone, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
     try { await suite(); } catch (e) { failed++; console.log("  ✗ Testblock abgebrochen: " + (e && e.stack || e)); }
   }
   console.log(`\n${passed} bestanden, ${failed} fehlgeschlagen`);

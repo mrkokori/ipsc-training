@@ -37,6 +37,7 @@
     <button id="journal-btn" type="button" class="nav-btn">📓 Tagebuch</button>
     <button id="plans-btn" type="button" class="nav-btn">🗓 Trainingspläne</button>
     <button id="matches-btn" type="button" class="nav-btn">🏆 Matches</button>
+    <button id="stats-btn" type="button" class="nav-btn">📊 Statistik</button>
     <button id="print-targets-btn" type="button" class="nav-btn">🖨 Ziele drucken</button>
   </nav>
 
@@ -311,6 +312,13 @@
   </div>
 </div>
 
+<div id="stats-overlay" class="overlay hidden">
+  <div class="detail-panel" role="dialog" aria-modal="true" aria-label="Statistik">
+    <button id="stats-close" class="close-btn" aria-label="Schließen">×</button>
+    <div id="stats-content"></div>
+  </div>
+</div>
+
 <div id="plans-overlay" class="overlay hidden">
   <div class="detail-panel" role="dialog" aria-modal="true" aria-label="Trainingspläne">
     <button id="plans-close" class="close-btn" aria-label="Schließen">×</button>
@@ -352,8 +360,8 @@
   </div>
 </div>
 
-<script src="data/drills.js?v=2026.09.10"></script>
-<script src="lib/qrcode.js?v=2026.09.10"></script>
-<script src="app.js?v=2026.09.10"></script>
+<script src="data/drills.js?v=2026.09.11"></script>
+<script src="lib/qrcode.js?v=2026.09.11"></script>
+<script src="app.js?v=2026.09.11"></script>
 </body>
 </html>

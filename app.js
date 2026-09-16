@@ -11,7 +11,7 @@ let customPlans = [];
 let planProgress = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.10";
+const APP_VERSION = "2026.09.11";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -239,6 +239,7 @@ async function init() {
   safeInit("Einstellungen", initSettingsDialog);
   safeInit("Trainingstagebuch", initJournal);
   safeInit("Matches", initMatches);
+  safeInit("Statistik", initStats);
   safeInit("Trainingspläne", initPlans);
   safeInit("Druckvorlagen", initPrintTargets);
   document.getElementById("export-csv-btn").addEventListener("click", exportScoresCsv);
@@ -249,7 +250,7 @@ async function init() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (closeStageEditor()) return;
-      closeDetail(); closeCreate(); closeSettings(); closeJournal(); closePrintTargets(); closeMatches(); closePlans();
+      closeDetail(); closeCreate(); closeSettings(); closeJournal(); closePrintTargets(); closeMatches(); closePlans(); closeStats();
     }
   });
 
@@ -730,6 +731,162 @@ function analyzeMatch(match) {
   return { stages, ranked, points, maxPoints, lost, lostTotal: Object.values(lost).reduce((a, b) => a + b, 0), percent, accuracy, focus };
 }
 
+// ---------- Statistik: Übersicht über alle Übungen und Trainings hinweg ----------
+
+function initStats() {
+  const overlayEl = document.getElementById("stats-overlay");
+  document.getElementById("stats-btn").addEventListener("click", openStats);
+  document.getElementById("stats-close").addEventListener("click", closeStats);
+  overlayEl.addEventListener("click", (e) => { if (e.target === overlayEl) closeStats(); });
+}
+
+function openStats() {
+  renderStats();
+  const overlayEl = document.getElementById("stats-overlay");
+  if (overlayEl.classList.contains("hidden")) {
+    overlayEl.classList.remove("hidden");
+    lockBodyScroll();
+  }
+}
+
+function closeStats() {
+  const overlayEl = document.getElementById("stats-overlay");
+  if (!overlayEl || overlayEl.classList.contains("hidden")) return;
+  overlayEl.classList.add("hidden");
+  unlockBodyScroll();
+}
+
+// Alle geloggten Ergebnisse aus allen Übungen zusammen, chronologisch sortiert.
+function allScoreEntries() {
+  const all = [];
+  for (const [drillId, entries] of Object.entries(scoreLogs)) {
+    for (const e of entries) all.push({ drillId, ...e });
+  }
+  return all.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function statsOverview() {
+  return {
+    sessions: sessions.length,
+    roundsTotal: sessions.reduce((n, x) => n + x.rounds, 0),
+    resultsTotal: allScoreEntries().length,
+    matches: matches.length
+  };
+}
+
+// Rollierende A-Quote über alle Ergebnisse hinweg (Fenster: letzte 10). Anders als der
+// Hit-Factor ist die A-Quote (0–100 %) zwischen unterschiedlichen Übungen vergleichbar,
+// deshalb eignet sie sich als übergreifende Trendlinie.
+function globalAccuracyTrend(entries, windowSize = 10) {
+  return entries.map((_, i) => {
+    const slice = entries.slice(Math.max(0, i - windowSize + 1), i + 1);
+    const shots = slice.reduce((n, e) => n + e.alpha + e.charlie + e.delta + (e.mike || 0), 0);
+    return shots ? slice.reduce((n, e) => n + e.alpha, 0) / shots * 100 : 0;
+  });
+}
+
+function globalAccuracyChartSvg(entries) {
+  const w = 340, h = 150, left = 40, right = 10, top = 12, bottom = 22;
+  const values = globalAccuracyTrend(entries);
+  const x = i => left + (values.length > 1 ? i * (w - left - right) / (values.length - 1) : 0);
+  const y = v => top + (1 - v / 100) * (h - top - bottom);
+  const line = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const shortDate = iso => { const d = new Date(iso); return `${d.getDate()}.${d.getMonth() + 1}.`; };
+  return `
+  <svg viewBox="0 0 ${w} ${h}" width="100%" role="img" aria-label="Verlauf der A-Quote über alle Übungen">
+    <rect x="0" y="0" width="${w}" height="${h}" fill="#0b0d10" rx="6"/>
+    <line x1="${left}" y1="${top}" x2="${w - right}" y2="${top}" stroke="#1f232a"/>
+    <line x1="${left}" y1="${h - bottom}" x2="${w - right}" y2="${h - bottom}" stroke="#1f232a"/>
+    <text x="${left - 4}" y="${top + 4}" fill="#9aa3af" font-size="10" text-anchor="end">100 %</text>
+    <text x="${left - 4}" y="${h - bottom + 4}" fill="#9aa3af" font-size="10" text-anchor="end">0 %</text>
+    <text x="${left}" y="${h - 6}" fill="#9aa3af" font-size="10">${escapeXml(shortDate(entries[0].date))}</text>
+    <text x="${w - right}" y="${h - 6}" fill="#9aa3af" font-size="10" text-anchor="end">${escapeXml(shortDate(entries[entries.length - 1].date))}</text>
+    <polyline points="${line}" fill="none" stroke="#e8620c" stroke-width="2"/>
+  </svg>`;
+}
+
+function monthlySessionCounts(maxMonths = 6) {
+  const counts = new Map();
+  for (const s of sessions) counts.set(s.date.slice(0, 7), (counts.get(s.date.slice(0, 7)) || 0) + 1);
+  return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-maxMonths);
+}
+
+const MONTH_NAMES = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+function formatMonthKey(key) {
+  const [y, m] = key.split("-");
+  return `${MONTH_NAMES[parseInt(m, 10) - 1]} ${y}`;
+}
+
+function topPracticedDrills(limit = 5) {
+  return Object.entries(scoreLogs)
+    .filter(([, entries]) => entries.length)
+    .map(([drillId, entries]) => {
+      const drill = DRILLS.find(d => d.id === drillId);
+      return { title: drill ? drill.title : drillId, count: entries.length, best: Math.max(...entries.map(e => e.hitFactor)) };
+    })
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+}
+
+function categoryDistribution() {
+  const counts = new Map();
+  for (const [drillId, entries] of Object.entries(scoreLogs)) {
+    if (!entries.length) continue;
+    const cat = (DRILLS.find(d => d.id === drillId) || {}).category || "Unbekannt";
+    counts.set(cat, (counts.get(cat) || 0) + entries.length);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function barListHtml(rows) {
+  const max = Math.max(1, ...rows.map(r => r.value));
+  return `<div class="loss-bars">${rows.map(r => `
+    <div class="loss-row">
+      <span class="loss-label">${escapeHtml(r.label)}</span>
+      <span class="loss-bar"><span data-bar-width="${(r.value / max * 100).toFixed(1)}%"></span></span>
+      <span class="loss-value">${escapeHtml(String(r.value))}${r.suffix || ""}</span>
+    </div>`).join("")}</div>`;
+}
+
+function renderStats() {
+  const box = document.getElementById("stats-content");
+  const ov = statsOverview();
+  const entries = allScoreEntries();
+  const months = monthlySessionCounts();
+  const top = topPracticedDrills();
+  const cats = categoryDistribution();
+
+  box.innerHTML = `
+    <h2>Statistik</h2>
+    <div class="detail-grid">
+      <div class="stat-box"><div class="label">Trainingseinheiten</div><div class="value">${ov.sessions}</div></div>
+      <div class="stat-box"><div class="label">Verschossene Patronen</div><div class="value">${ov.roundsTotal}</div></div>
+      <div class="stat-box"><div class="label">Erfasste Ergebnisse</div><div class="value">${ov.resultsTotal}</div></div>
+      <div class="stat-box"><div class="label">Erfasste Matches</div><div class="value">${ov.matches}</div></div>
+    </div>
+
+    ${entries.length >= 2 ? `
+    <div class="section-title">A-Quote im Verlauf (alle Übungen)</div>
+    <p class="settings-note">Rollierender Schnitt über die letzten 10 Ergebnisse – anders als der Hit-Factor zwischen unterschiedlichen Übungen direkt vergleichbar.</p>
+    <div class="score-chart-wrap">${globalAccuracyChartSvg(entries)}</div>` : ""}
+
+    ${months.length ? `
+    <div class="section-title">Trainingshäufigkeit</div>
+    ${barListHtml(months.map(([key, count]) => ({ label: formatMonthKey(key), value: count })))}` : ""}
+
+    ${top.length ? `
+    <div class="section-title">Meistgeübte Übungen</div>
+    ${barListHtml(top.map(x => ({ label: x.title, value: x.count, suffix: "×" })))}` : ""}
+
+    ${cats.length ? `
+    <div class="section-title">Kategorien im Training</div>
+    ${barListHtml(cats.map(([cat, count]) => ({ label: cat, value: count })))}` : ""}
+
+    ${!entries.length && !sessions.length ? `<p class="settings-note">Noch keine Trainingsdaten erfasst – trag Ergebnisse bei einer Übung ein oder leg im Tagebuch eine Einheit an, dann erscheinen hier Auswertungen.</p>` : ""}
+  `;
+  applyBarWidths(box);
+}
+
 function initMatches() {
   const overlayEl = document.getElementById("match-overlay");
   document.getElementById("matches-btn").addEventListener("click", openMatches);
@@ -896,7 +1053,7 @@ function renderMatchAnalysis(match) {
       ${Object.entries(a.lost).map(([key, value]) => `
         <div class="loss-row" title="${LOSS_HINTS[key]}">
           <span class="loss-label">${LOSS_LABELS[key]}<small>${LOSS_HINTS[key]}</small></span>
-          <span class="loss-bar"><span style="width:${(value / maxLoss * 100).toFixed(1)}%"></span></span>
+          <span class="loss-bar"><span data-bar-width="${(value / maxLoss * 100).toFixed(1)}%"></span></span>
           <span class="loss-value">${value}</span>
         </div>`).join("")}
     </div>
@@ -927,6 +1084,7 @@ function renderMatchAnalysis(match) {
       <button type="button" class="tool-btn" id="m-back">Zur Liste</button>
       <button type="button" class="edit-btn" id="m-edit">Bearbeiten</button>
     </div>`;
+  applyBarWidths(box);
   document.getElementById("m-back").addEventListener("click", renderMatchList);
   document.getElementById("m-edit").addEventListener("click", () => renderMatchForm(match));
   box.querySelectorAll(".advice-drill, .stage-sketch").forEach(btn => btn.addEventListener("click", () => {
@@ -1053,13 +1211,14 @@ function renderPlanList() {
       <span class="journal-where"><strong>${escapeHtml(plan.title)}</strong></span>
       ${plan.builtin ? `<span class="badge difficulty">Vorlage</span>` : `<span class="badge custom">Eigener Plan</span>`}
       <span class="journal-meta">${done} von ${plan.days.length} erledigt</span>
-      <span class="plan-progress"><span style="width:${(done / plan.days.length * 100).toFixed(0)}%"></span></span>
+      <span class="plan-progress"><span data-bar-width="${(done / plan.days.length * 100).toFixed(0)}%"></span></span>
     </button>`;
   };
   box.innerHTML = `
     <h2>Trainingspläne</h2>
     <button type="button" class="save-btn" id="plan-new-btn">+ Eigener Plan</button>
     <div class="journal-list">${allPlans().map(item).join("")}</div>`;
+  applyBarWidths(box);
   document.getElementById("plan-new-btn").addEventListener("click", () => renderPlanForm(null));
   box.querySelectorAll(".plan-item").forEach(btn => btn.addEventListener("click", () => renderPlanView(allPlans().find(pl => pl.id === btn.dataset.id))));
 }
@@ -2057,6 +2216,14 @@ function closeDetail() {
 // grid behind the modal. Locking body scroll while a modal is open stops it.
 let bodyScrollLockCount = 0;
 let bodyScrollY = 0;
+// Die CSP (style-src 'self') blockiert style="…"-Attribute aus innerHTML-Strings.
+// Balkenbreiten werden deshalb über data-bar-width transportiert und hier per CSSOM
+// zugewiesen – das ist von style-src nicht betroffen, weil dabei kein Stylesheet-Text
+// geparst wird, sondern eine einzelne CSSStyleDeclaration-Eigenschaft gesetzt wird.
+function applyBarWidths(container) {
+  container.querySelectorAll("[data-bar-width]").forEach(el => { el.style.width = el.dataset.barWidth; });
+}
+
 function lockBodyScroll() {
   if (bodyScrollLockCount === 0) {
     bodyScrollY = window.scrollY;
