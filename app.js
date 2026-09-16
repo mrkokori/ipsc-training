@@ -11,7 +11,7 @@ let customPlans = [];
 let planProgress = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.12";
+const APP_VERSION = "2026.09.13";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -31,6 +31,8 @@ const SESSIONS_KEY = "ipscSessions";
 const MATCHES_KEY = "ipscMatches";
 const PLANS_KEY = "ipscPlans";
 const PLAN_PROGRESS_KEY = "ipscPlanProgress";
+const LAST_EXPORT_KEY = "ipscLastExportAt";
+const EXPORT_REMINDER_DAYS = 10;
 const DIVISIONS = ["Production", "Production Optics", "Standard", "Open", "Classic", "Revolver", "PCC"];
 const THEMES = ["dark", "light", "system"];
 
@@ -188,6 +190,9 @@ const DRAG_HINT = " Bereits gesetzte Elemente kannst du direkt anfassen und vers
 // Sammelt Teile der App, die beim Start fehlgeschlagen sind (siehe safeInit unten).
 const initFailures = [];
 
+// PWA-Installations-Event (siehe initInstallPrompt weiter unten).
+let deferredInstallPrompt = null;
+
 // __proto__/constructor/prototype werden von cleanId() verworfen, weil IDs aus importierten
 // oder gespeicherten Dateien später als Objekt-Schlüssel verwendet werden (result[id] = …).
 // Sonst könnte eine manipulierte Datei das Prototype eines internen Objekts überschreiben.
@@ -285,8 +290,58 @@ async function init() {
 
   safeInit("Teilen-Link", handleSharedLinkFromUrl);
   safeInit("Offline-Speicher", initServiceWorker);
+  safeInit("Installations-Hinweis", initInstallPrompt);
+  safeInit("Export-Erinnerung", checkExportReminder);
 
   if (initFailures.length) showInitFailureWarning();
+}
+
+// ---------- App installieren (Android/Chrome) ----------
+// iOS/Safari unterstützt beforeinstallprompt nicht – dort bleibt es beim Hinweis
+// im Speicher-Warnbanner ("Teilen → Zum Home-Bildschirm").
+
+function initInstallPrompt() {
+  const banner = document.getElementById("install-banner");
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    banner.classList.remove("hidden");
+  });
+  document.getElementById("install-btn").addEventListener("click", async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    banner.classList.add("hidden");
+  });
+  document.getElementById("install-banner-close").addEventListener("click", () => {
+    banner.classList.add("hidden");
+  });
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    banner.classList.add("hidden");
+  });
+}
+
+// ---------- Erinnerung zum Exportieren ----------
+// Erinnert alle EXPORT_REMINDER_DAYS Tage ans Sichern, aber nur wenn es überhaupt
+// etwas zu sichern gibt – ein frischer, leerer Stand muss niemanden nerven.
+
+function checkExportReminder() {
+  const hasData = customDrills.length || sessions.length || matches.length || customPlans.length || Object.keys(editedBuiltins).length;
+  if (!hasData) return;
+  const last = localStorage.getItem(LAST_EXPORT_KEY);
+  const daysSince = last ? (Date.now() - new Date(last).getTime()) / 86400000 : Infinity;
+  if (daysSince < EXPORT_REMINDER_DAYS) return;
+  const text = document.getElementById("export-reminder-text");
+  const label = Number.isFinite(daysSince)
+    ? `Dein letzter Export ist ${Math.floor(daysSince)} Tage her.`
+    : "Du hast deine Trainings noch nie exportiert.";
+  text.textContent = `⭳ ${label} Zur Sicherheit regelmäßig mit „Alles exportieren“ sichern.`;
+  document.getElementById("export-reminder-banner").classList.remove("hidden");
+  document.getElementById("export-reminder-close").addEventListener("click", () => {
+    document.getElementById("export-reminder-banner").classList.add("hidden");
+  });
 }
 
 // Startet einen Teil der App, ohne dass ein Fehler darin den Rest der Initialisierung
@@ -3427,6 +3482,8 @@ function exportAll() {
     ...(!includeScores && customPlans.length ? { plans: customPlans } : {})
   };
   downloadJSON(JSON.stringify(payload, null, 2), "ipsc-training-export.json");
+  localStorage.setItem(LAST_EXPORT_KEY, new Date().toISOString());
+  document.getElementById("export-reminder-banner").classList.add("hidden");
   showDbMsg(includeScores
     ? "Export (inkl. Zeiten, Favoriten, Tagebuch, Matches und Plänen) heruntergeladen."
     : "Export heruntergeladen – Datei an Kollegen weitergeben, die können sie importieren.");

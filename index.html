@@ -28,6 +28,15 @@
     <span>⚠️ Deine Trainings werden nur lokal in diesem Browser gespeichert. Wenn du den Browser-Cache/-Verlauf löschst oder ein neues Handy nutzt, sind sie weg. Speichere sie deshalb regelmäßig extern ab – mit dem Button <strong>„⭳ Alles exportieren“</strong> weiter unten.<br><strong>Tipp fürs iPhone:</strong> Füge die App über <em>Teilen → Zum Home-Bildschirm</em> hinzu. In einem normalen Safari-Tab kann iOS gespeicherte Daten löschen, wenn du die Seite länger nicht öffnest.</span>
     <button type="button" id="storage-warning-close" class="banner-close" aria-label="Hinweis schließen">×</button>
   </div>
+  <div id="install-banner" class="info-banner hidden" role="status">
+    <span>📲 Als App installieren – dann startet sie vom Startbildschirm wie eine normale App, auch offline.</span>
+    <button type="button" id="install-btn" class="save-btn">Installieren</button>
+    <button type="button" id="install-banner-close" class="banner-close" aria-label="Hinweis schließen">×</button>
+  </div>
+  <div id="export-reminder-banner" class="info-banner hidden" role="status">
+    <span id="export-reminder-text"></span>
+    <button type="button" id="export-reminder-close" class="banner-close" aria-label="Hinweis schließen">×</button>
+  </div>
   <div id="init-failure-warning" class="info-banner hidden" role="alert">
     <span id="init-failure-text"></span>
     <button type="button" id="init-failure-reload-btn" class="save-btn">Neu laden</button>
@@ -368,8 +377,8 @@
   </div>
 </div>
 
-<script src="data/drills.js?v=2026.09.12"></script>
-<script src="lib/qrcode.js?v=2026.09.12"></script>
-<script src="app.js?v=2026.09.12"></script>
+<script src="data/drills.js?v=2026.09.13"></script>
+<script src="lib/qrcode.js?v=2026.09.13"></script>
+<script src="app.js?v=2026.09.13"></script>
 </body>
 </html>

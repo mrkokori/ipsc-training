@@ -636,6 +636,65 @@ async function testMicrophone() {
   ok(E("settings").micSensitivity === 9, "Empfindlichkeit in den Einstellungen gespeichert");
 }
 
+async function testInstallAndExportReminder() {
+  section("App-Installation, Export-Erinnerung");
+
+  // Installations-Banner: erscheint erst, wenn der Browser beforeinstallprompt feuert
+  let { w, E, $ } = boot();
+  ok($("#install-banner").classList.contains("hidden"), "kein Installations-Hinweis ohne beforeinstallprompt");
+  let prompted = false, choiceAsked = false;
+  const evt = Object.assign(new w.Event("beforeinstallprompt", { cancelable: true }), {
+    prompt: () => { prompted = true; },
+    userChoice: (async () => { choiceAsked = true; return { outcome: "accepted" }; })()
+  });
+  w.dispatchEvent(evt);
+  ok(!$("#install-banner").classList.contains("hidden"), "beforeinstallprompt zeigt den Installations-Hinweis");
+  ok(evt.defaultPrevented, "Standard-Installationsdialog des Browsers wird unterdrückt (eigener Button steuert ihn)");
+  $("#install-btn").click(); await sleep(20);
+  ok(prompted && choiceAsked, "Installieren-Button löst den Browser-Installationsdialog aus");
+  ok($("#install-banner").classList.contains("hidden"), "Hinweis verschwindet nach der Installation");
+
+  ({ w, E, $ } = boot());
+  w.dispatchEvent(Object.assign(new w.Event("beforeinstallprompt", { cancelable: true }), { prompt: () => {}, userChoice: Promise.resolve({}) }));
+  $("#install-banner-close").click();
+  ok($("#install-banner").classList.contains("hidden"), "Hinweis lässt sich auch ohne Installieren schließen");
+
+  // Export-Erinnerung: nur wenn es etwas zu sichern gibt, und erst ab EXPORT_REMINDER_DAYS
+  ({ w, E, $ } = boot());
+  ok($("#export-reminder-banner").classList.contains("hidden"), "kein Erinnerungs-Hinweis ohne jegliche Daten");
+
+  ({ w, E, $ } = boot({ storage: { ipscSessions: [{ id: "s1", date: "2026-01-01", type: "live", location: "", rounds: 10, minutes: 10, drillIds: [], notes: "" }] } }));
+  ok(!$("#export-reminder-banner").classList.contains("hidden") && /noch nie exportiert/.test($("#export-reminder-text").textContent), "mit Daten, aber noch nie exportiert: Hinweis erscheint");
+
+  const recent = new Date(Date.now() - 3 * 86400000).toISOString();
+  ({ w, E, $ } = boot({
+    storage: { ipscSessions: [{ id: "s1", date: "2026-01-01", type: "live", location: "", rounds: 10, minutes: 10, drillIds: [], notes: "" }] },
+    beforeApp: (win) => win.localStorage.setItem("ipscLastExportAt", recent)
+  }));
+  ok($("#export-reminder-banner").classList.contains("hidden"), "vor Ablauf der Frist (3 von 10 Tagen): kein Hinweis");
+
+  const overdue = new Date(Date.now() - 11 * 86400000).toISOString();
+  ({ w, E, $ } = boot({
+    storage: { ipscSessions: [{ id: "s1", date: "2026-01-01", type: "live", location: "", rounds: 10, minutes: 10, drillIds: [], notes: "" }] },
+    beforeApp: (win) => win.localStorage.setItem("ipscLastExportAt", overdue)
+  }));
+  ok(!$("#export-reminder-banner").classList.contains("hidden") && /11 Tage her/.test($("#export-reminder-text").textContent), "nach Ablauf der Frist (11 Tage): Hinweis mit Tagesangabe");
+  $("#export-reminder-close").click();
+  ok($("#export-reminder-banner").classList.contains("hidden"), "Erinnerung lässt sich schließen");
+
+  // exportAll() merkt sich den Zeitpunkt und blendet eine offene Erinnerung aus
+  ({ w, E, $ } = boot({
+    storage: { ipscSessions: [{ id: "s1", date: "2026-01-01", type: "live", location: "", rounds: 10, minutes: 10, drillIds: [], notes: "" }] },
+    beforeApp: (win) => win.localStorage.setItem("ipscLastExportAt", overdue)
+  }));
+  ok(!$("#export-reminder-banner").classList.contains("hidden"), "Hinweis vor dem Export sichtbar");
+  w.__t("downloadJSON = () => {}");
+  E("exportAll")();
+  ok($("#export-reminder-banner").classList.contains("hidden"), "Export blendet die Erinnerung aus");
+  const stored = new Date(w.localStorage.getItem("ipscLastExportAt"));
+  ok(Date.now() - stored.getTime() < 5000, "Export-Zeitpunkt wird gespeichert");
+}
+
 async function testUpdateBanner() {
   section("Update-Hinweis");
   const fakeServiceWorker = (swVersion) => (w) => {
@@ -888,7 +947,7 @@ function testLicenseFiles() {
 }
 
 (async () => {
-  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testStageEditor, testMatches, testPlans, testStats, testMicrophone, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
+  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testStageEditor, testMatches, testPlans, testStats, testMicrophone, testInstallAndExportReminder, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
     try { await suite(); } catch (e) { failed++; console.log("  ✗ Testblock abgebrochen: " + (e && e.stack || e)); }
   }
   console.log(`\n${passed} bestanden, ${failed} fehlgeschlagen`);
