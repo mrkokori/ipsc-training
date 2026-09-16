@@ -7,12 +7,21 @@ Eine Web-App für IPSC-Schützen: Übungen finden, Aufbau ansehen, mit Par-Timer
 ## Funktionen
 
 - **Übungsbibliothek** mit 19 Standard-Übungen (Ziehen, Magazinwechsel, Zielwechsel, Bewegung, starke/schwache Hand, Startpositionen) und eigenen Trainings
-- **Stage-Skizzen-Editor** mit Targets, Plates, Poppern, Pendlern, No-Shoots, Wänden, Boxen und Props
+- **Stage-Editor im Vollbild** mit Zoom, Raster in Metern und frei wählbarer Stagegröße. Elemente lassen sich auswählen, verschieben, drehen, duplizieren und umbenennen
+- **Alle gängigen Stage-Elemente:** Target, Mini-Target, No-Shoot, Hardcover, Pendler, Up-Down, Mover, Drop Turner und Clamshell mit Auslöser, Plate, Popper, Mini-Popper, Metall-No-Shoot, Fault Line, Wand, Port, Tür, Box, Fass, Tisch, Sessel, Laufweg und Freitext
 - **Suche und Favoriten**
 - **Par-Timer** mit zufälliger Startverzögerung, Par-Signal und mehreren Durchgängen
 - **Ergebnisse nach IPSC-Wertung** (Major/Minor, Miss, No-Shoot, Procedural) mit Hit-Factor, Bestwert, Durchschnitt, A-Quote und Verlaufsdiagramm
 - **Teilen** per Link, QR-Code oder Datei, Skizze als Bild speichern
-- **Export und Import** aller Daten als JSON-Datei
+- **Stagebriefing** über jeder Skizze: Papierziele, Popper, Plates, Mindestschusszahl, Kursart (Short/Medium/Long Course) und nötige Magazinwechsel
+- **Schussplan** direkt in der Skizze: Reihenfolge der Ziele und Magazinwechsel, mit Warnung, wenn ein Magazin nicht reicht
+- **Match-Analyse:** Stage-Ergebnisse eintragen, Punktverlust nach C, D, Miss, No-Shoot und Procedural, Prozent vom Stagesieger und passende Übungsempfehlungen
+- **Trainingspläne:** drei Vorlagen (Trockentraining, Match-Vorbereitung, Scharfschießen) und eigene Pläne mit Fortschritt
+- **Schusserkennung per Mikrofon (Beta)** im Par-Timer: erster Schuss, Splits und Zeit direkt ins Ergebnis übernehmen – die Audiodaten bleiben auf dem Gerät
+- **Trainingstagebuch** mit Scharf- und Trockentraining, Munitionsverbrauch pro Monat und Jahr
+- **Ziele zum Ausdrucken** fürs Trockentraining, maßstabsgetreu verkleinert
+- **Heller Modus und große Schrift** für draußen am Stand
+- **Export und Import** aller Daten als JSON-Datei, Ergebnisse zusätzlich als CSV für Excel
 
 ## Datenschutz
 
@@ -29,6 +38,8 @@ Alle Trainings, Ergebnisse und Einstellungen werden ausschließlich lokal im Bro
 | `lib/qrcode.js` | QR-Code-Erzeugung (Fremdbibliothek, MIT-Lizenz) |
 | `sw.js` | Service Worker für Offline-Betrieb |
 | `tests/run-tests.js` | automatische Tests |
+| `LICENSE` | Lizenz (alle Rechte vorbehalten) |
+| `THIRD_PARTY_NOTICES.md` | Lizenzen der Fremdbestandteile |
 
 ## Entwicklung
 
@@ -47,6 +58,10 @@ Auf GitHub laufen die Tests bei jedem Commit automatisch (Tab **Actions**).
 
 Die App ersetzt keine Sicherheitsunterweisung. Es gelten immer die Standregeln und die IPSC-Regeln. Trockentraining nur ohne Munition im Raum.
 
-## Lizenzen
+## Lizenz
+
+© 2026 Dominic (mrkokori). **Alle Rechte vorbehalten**, siehe [LICENSE](LICENSE). Der Code ist öffentlich einsehbar, darf aber ohne Zustimmung nicht kopiert oder weiterverwendet werden.
+
+Ausgenommen sind Bestandteile Dritter, siehe [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md):
 
 - `lib/qrcode.js`: QR Code Generator for JavaScript, © 2009 Kazuhiko Arase, MIT-Lizenz

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-theme="dark" data-fontsize="normal">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -27,6 +27,13 @@
     <span>⚠️ Deine Trainings werden nur lokal in diesem Browser gespeichert. Wenn du den Browser-Cache/-Verlauf löschst oder ein neues Handy nutzt, sind sie weg. Speichere sie deshalb regelmäßig extern ab – mit dem Button <strong>„⭳ Alles exportieren“</strong> weiter unten.<br><strong>Tipp fürs iPhone:</strong> Füge die App über <em>Teilen → Zum Home-Bildschirm</em> hinzu. In einem normalen Safari-Tab kann iOS gespeicherte Daten löschen, wenn du die Seite länger nicht öffnest.</span>
     <button type="button" id="storage-warning-close" class="banner-close" aria-label="Hinweis schließen">×</button>
   </div>
+
+  <nav class="app-nav" aria-label="Training">
+    <button id="journal-btn" type="button" class="nav-btn">📓 Tagebuch</button>
+    <button id="plans-btn" type="button" class="nav-btn">🗓 Trainingspläne</button>
+    <button id="matches-btn" type="button" class="nav-btn">🏆 Matches</button>
+    <button id="print-targets-btn" type="button" class="nav-btn">🖨 Ziele drucken</button>
+  </nav>
 
   <section class="filters" aria-label="Filter">
     <div class="filter-group filter-search">
@@ -67,6 +74,7 @@
     <button id="import-btn" type="button" class="tool-btn">⭱ Importieren</button>
     <button id="import-link-btn" type="button" class="tool-btn">🔗 Link einfügen</button>
     <input type="file" id="import-file-input" accept="application/json" class="hidden">
+    <button id="export-csv-btn" type="button" class="tool-btn">⭳ Ergebnisse als CSV</button>
     <button id="settings-btn" type="button" class="tool-btn">⚙ Einstellungen</button>
     <span id="db-tools-msg" class="db-tools-msg"></span>
   </section>
@@ -137,32 +145,11 @@
         </label>
       </div>
 
-      <div class="section-title">Stage-Skizze bauen</div>
-      <div class="builder-toolbar">
-        <button type="button" class="tool-btn tool-select active" data-tool="target">Target</button>
-        <button type="button" class="tool-btn tool-select" data-tool="steel">⬤ Plate</button>
-        <button type="button" class="tool-btn tool-select" data-tool="popper">Popper</button>
-        <button type="button" class="tool-btn tool-select" data-tool="pendler">Pendler</button>
-        <button type="button" class="tool-btn tool-select" data-tool="updown">Up-Down-Ziel</button>
-        <button type="button" class="tool-btn tool-select" data-tool="noshoot">No-Shoot</button>
-        <button type="button" class="tool-btn tool-select" data-tool="shooter">Schütze</button>
-      </div>
-      <div class="builder-toolbar">
-        <button type="button" class="tool-btn tool-select" data-tool="wall">Wand (2 Klicks)</button>
-        <button type="button" class="tool-btn tool-select" data-tool="box">Box (2 Klicks)</button>
-        <button type="button" class="tool-btn tool-select" data-tool="tisch">Tisch</button>
-        <button type="button" class="tool-btn tool-select" data-tool="sessel">Sessel</button>
-        <button type="button" class="tool-btn tool-select tool-delete" data-tool="delete">🗑 Löschen</button>
-      </div>
-      <div class="builder-toolbar">
-        <button type="button" id="rotate-shooter-btn" class="tool-btn">Schütze drehen 45°</button>
-        <button type="button" id="undo-btn" class="tool-btn">Rückgängig</button>
-        <button type="button" id="clear-builder-btn" class="tool-btn">Alles leeren</button>
-      </div>
-      <div class="layout-svg-wrap builder-svg-wrap">
-        <svg id="builder-svg" viewBox="0 0 400 500" width="360" height="450"></svg>
-      </div>
-      <p class="builder-hint" id="builder-hint">Klicke in die Fläche, um ein Ziel zu platzieren.</p>
+      <div class="section-title">Stage-Skizze</div>
+      <div class="builder-preview layout-svg-wrap" id="builder-preview" role="button" tabindex="0" aria-label="Stage-Editor öffnen"></div>
+      <button type="button" class="save-btn open-editor-btn" id="open-stage-editor">Stage-Editor öffnen</button>
+      <p class="builder-summary" id="builder-summary"></p>
+      <div id="builder-plan"></div>
 
       <div class="form-actions">
         <button type="button" id="create-cancel" class="tool-btn">Abbrechen</button>
@@ -170,6 +157,77 @@
       </div>
     </form>
   </div>
+</div>
+
+<div id="stage-editor" class="stage-editor hidden" role="dialog" aria-modal="true" aria-label="Stage-Editor">
+  <div class="se-top">
+    <strong class="se-title">Stage-Editor</strong>
+    <label class="se-size">Breite <input type="number" id="se-width" min="5" max="100" step="1" inputmode="numeric"> m</label>
+    <label class="se-size">Tiefe <input type="number" id="se-depth" min="5" max="100" step="1" inputmode="numeric"> m</label>
+    <label class="se-snap"><input type="checkbox" id="se-snap" checked> Raster</label>
+    <div class="se-zoom">
+      <button type="button" class="tool-btn" id="se-zoom-out" aria-label="Verkleinern">−</button>
+      <button type="button" class="tool-btn" id="se-fit">Einpassen</button>
+      <button type="button" class="tool-btn" id="se-zoom-in" aria-label="Vergrößern">+</button>
+    </div>
+    <button type="button" id="undo-btn" class="tool-btn">Rückgängig</button>
+    <button type="button" id="se-done" class="save-btn">Fertig</button>
+  </div>
+  <div class="se-main">
+    <div class="se-tools builder-toolbar" role="toolbar" aria-label="Werkzeuge">
+      <div class="se-group">
+        <span class="se-group-title">Bearbeiten</span>
+          <button type="button" class="tool-btn tool-select active" data-tool="select">Auswählen</button>
+          <button type="button" class="tool-btn tool-select" data-tool="delete">Löschen</button>
+          <button type="button" class="tool-btn tool-select" data-tool="plan">Schussplan</button>
+      </div>
+      <div class="se-group">
+        <span class="se-group-title">Papier</span>
+          <button type="button" class="tool-btn tool-select" data-tool="target">Target</button>
+          <button type="button" class="tool-btn tool-select" data-tool="mini">Mini-Target</button>
+          <button type="button" class="tool-btn tool-select" data-tool="noshoot">No-Shoot</button>
+          <button type="button" class="tool-btn tool-select" data-tool="pendler">Pendler</button>
+          <button type="button" class="tool-btn tool-select" data-tool="updown">Up-Down</button>
+          <button type="button" class="tool-btn tool-select" data-tool="mover">Mover</button>
+          <button type="button" class="tool-btn tool-select" data-tool="dropturner">Drop Turner</button>
+          <button type="button" class="tool-btn tool-select" data-tool="clamshell">Clamshell</button>
+      </div>
+      <div class="se-group">
+        <span class="se-group-title">Stahl</span>
+          <button type="button" class="tool-btn tool-select" data-tool="steel">Plate</button>
+          <button type="button" class="tool-btn tool-select" data-tool="popper">Popper</button>
+          <button type="button" class="tool-btn tool-select" data-tool="minipopper">Mini-Popper</button>
+          <button type="button" class="tool-btn tool-select" data-tool="metalns">Metall-No-Shoot</button>
+      </div>
+      <div class="se-group">
+        <span class="se-group-title">Aufbau</span>
+          <button type="button" class="tool-btn tool-select" data-tool="fault">Fault Line</button>
+          <button type="button" class="tool-btn tool-select" data-tool="wall">Wand</button>
+          <button type="button" class="tool-btn tool-select" data-tool="port">Port</button>
+          <button type="button" class="tool-btn tool-select" data-tool="tuer">Tür</button>
+          <button type="button" class="tool-btn tool-select" data-tool="box">Box</button>
+          <button type="button" class="tool-btn tool-select" data-tool="fass">Fass</button>
+          <button type="button" class="tool-btn tool-select" data-tool="tisch">Tisch</button>
+          <button type="button" class="tool-btn tool-select" data-tool="sessel">Sessel</button>
+      </div>
+      <div class="se-group">
+        <span class="se-group-title">Schütze &amp; Text</span>
+          <button type="button" class="tool-btn tool-select" data-tool="shooter">Schütze</button>
+          <button type="button" class="tool-btn tool-select" data-tool="path">Laufweg</button>
+          <button type="button" class="tool-btn tool-select" data-tool="text">Text</button>
+      </div>
+      <div class="se-group se-group-actions">
+        <button type="button" id="plan-reload-btn" class="tool-btn">Magazinwechsel in Plan</button>
+        <button type="button" id="plan-clear-btn" class="tool-btn">Plan löschen</button>
+        <button type="button" id="clear-builder-btn" class="tool-btn">Alles leeren</button>
+      </div>
+    </div>
+    <div class="se-canvas">
+      <svg id="builder-svg" viewBox="-20 -20 440 540" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg"></svg>
+      <p class="builder-hint" id="builder-hint"></p>
+    </div>
+  </div>
+  <div class="se-panel hidden" id="se-panel"></div>
 </div>
 
 <div id="settings-overlay" class="overlay hidden">
@@ -196,11 +254,95 @@
         <span>Durchgänge Par-Timer</span>
         <input type="number" id="set-reps" min="1" max="50" step="1" inputmode="numeric">
       </label>
+      <label class="form-field">
+        <span>Patronen pro Magazin</span>
+        <input type="number" id="set-magcap" min="1" max="100" step="1" inputmode="numeric">
+      </label>
+      <label class="form-field form-check">
+        <input type="checkbox" id="set-chamber">
+        <span>Beim Start eine Patrone im Lauf</span>
+      </label>
+      <label class="form-field">
+        <span>Mikrofon-Empfindlichkeit (1–10)</span>
+        <input type="number" id="set-mic" min="1" max="10" step="1" inputmode="numeric">
+      </label>
+      <label class="form-field">
+        <span>Design</span>
+        <select id="set-theme">
+          <option value="dark">Dunkel</option>
+          <option value="light">Hell (für draußen)</option>
+          <option value="system">Wie am Gerät eingestellt</option>
+        </select>
+      </label>
+      <label class="form-field">
+        <span>Schriftgröße</span>
+        <select id="set-fontsize">
+          <option value="normal">Normal</option>
+          <option value="large">Groß</option>
+        </select>
+      </label>
     </div>
+    <p class="settings-note">Die Magazinplanung zeigt, wie viele Wechsel eine Stage mindestens braucht. Maßgeblich sind die Regeln deiner Division.</p>
     <p class="settings-version" id="settings-version"></p>
+    <p class="settings-version">© 2026 Dominic (mrkokori), alle Rechte vorbehalten. Enthält „QR Code Generator for JavaScript“ © 2009 Kazuhiko Arase, MIT-Lizenz.</p>
     <div class="form-actions">
       <button type="button" id="settings-cancel" class="tool-btn">Abbrechen</button>
       <button type="button" id="settings-save" class="save-btn">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<div id="journal-overlay" class="overlay hidden">
+  <div class="detail-panel" role="dialog" aria-modal="true" aria-label="Trainingstagebuch">
+    <button id="journal-close" class="close-btn" aria-label="Schließen">×</button>
+    <div id="journal-content"></div>
+  </div>
+</div>
+
+<div id="match-overlay" class="overlay hidden">
+  <div class="detail-panel" role="dialog" aria-modal="true" aria-label="Matches">
+    <button id="match-close" class="close-btn" aria-label="Schließen">×</button>
+    <div id="match-content"></div>
+  </div>
+</div>
+
+<div id="plans-overlay" class="overlay hidden">
+  <div class="detail-panel" role="dialog" aria-modal="true" aria-label="Trainingspläne">
+    <button id="plans-close" class="close-btn" aria-label="Schließen">×</button>
+    <div id="plans-content"></div>
+  </div>
+</div>
+
+<div id="print-overlay" class="overlay hidden">
+  <div class="detail-panel settings-panel" role="dialog" aria-modal="true" aria-labelledby="print-title">
+    <button id="print-close" class="close-btn" aria-label="Schließen">×</button>
+    <h2 id="print-title">Ziele zum Ausdrucken</h2>
+    <p class="settings-note">Verkleinerte IPSC-Ziele fürs Trockentraining: Auf kurze Distanz wirken sie so groß wie ein echtes Ziel weiter weg.</p>
+    <div class="form-grid">
+      <label class="form-field">
+        <span>Übungsdistanz (m)</span>
+        <input type="number" id="p-practice" min="0.5" max="20" step="0.5" inputmode="decimal" value="3">
+      </label>
+      <label class="form-field">
+        <span>Simulierte Distanz (m)</span>
+        <input type="number" id="p-simulated" min="1" max="50" step="1" inputmode="decimal" value="10">
+      </label>
+      <label class="form-field">
+        <span>Ziele pro Seite</span>
+        <select id="p-count">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+        </select>
+      </label>
+      <label class="form-field form-check">
+        <input type="checkbox" id="p-ink" checked>
+        <span>Tintensparend (nur Umrisse)</span>
+      </label>
+    </div>
+    <p class="print-info" id="p-info"></p>
+    <div class="form-actions">
+      <button type="button" id="p-print" class="save-btn">Drucken</button>
     </div>
   </div>
 </div>

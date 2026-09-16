@@ -17,6 +17,8 @@
   const plate = (x, y, label) => ({ type: "steel", x, y, label });
   const popper = (x, y, label) => ({ type: "popper", x, y, label });
   const shooter = (x, y, label = "Start", facing = 0) => ({ x, y, facing, label });
+  // Schussplan: Zahlen = Index des Ziels in "targets", "R" = Magazinwechsel
+  const plan = (...steps) => steps.map(st => st === "R" ? { type: "reload" } : { type: "target", index: st });
 
   window.IPSC_DRILLS = [
     // ---------- Ziehen ----------
@@ -131,7 +133,8 @@
       focus: "Beim Umdrehen erst ziehen, wenn der Körper zu den Zielen zeigt, und die Mündung nie über den Sicherheitswinkel schwenken. Zielwechsel mit den Augen zuerst, die Waffe folgt.",
       layout: layout({
         targets: [paper(130, 110, "T1"), paper(200, 110, "T2"), paper(270, 110, "T3")],
-        shooterPositions: [shooter(200, 430, "Start", 180)]
+        shooterPositions: [shooter(200, 430, "Start", 180)],
+        plan: plan(0, 1, 2, "R", 0, 1, 2)
       })
     },
     {
@@ -232,7 +235,8 @@
         targets: [paper(70, 110, "T1"), paper(145, 110, "T2"), paper(255, 110, "T3"), paper(330, 110, "T4")],
         boxes: [{ x: 60, y: 380, w: 60, h: 60, label: "Box A" }, { x: 280, y: 380, w: 60, h: 60, label: "Box B" }],
         shooterPositions: [shooter(90, 410), shooter(310, 410, "Position 2")],
-        path: [[120, 410], [280, 410]]
+        path: [[120, 410], [280, 410]],
+        plan: plan(0, 1, 2, 3)
       })
     },
     {
