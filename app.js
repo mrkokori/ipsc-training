@@ -11,7 +11,7 @@ let customPlans = [];
 let planProgress = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.14";
+const APP_VERSION = "2026.09.15";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -75,7 +75,11 @@ const TARGET_A_ZONE = [[-0.12, -0.89], [-0.32, -0.36], [-0.32, 0], [-0.12, 0.23]
 const PAR_RESET_MS = 4000;       // Pause zwischen zwei Durchgängen
 const NO_PAR_RESET_MS = 8000;    // ohne Par-Zeit etwas mehr Zeit für die Übung
 const parTimer = { ctx: null, token: 0, timeouts: [], nodes: [], rafId: 0, wakeLock: null, running: false,
-  mic: null, startAudio: null, ignore: [], shots: [], lastShots: [] };
+  mic: null, startAudio: null, ignore: [], shots: [], lastShots: [], voiceRecognition: null, voiceArmed: false };
+
+// Wörter, auf die der Sprachstart reagiert (siehe initVoiceStart) – bewusst mehrere,
+// weil Spracherkennung "Standby" nicht immer zuverlässig trifft.
+const VOICE_START_WORDS = ["standby", "start", "los", "bereit"];
 
 // Teilen per Link
 const SHARE_HASH_PREFIX = "#t=";
@@ -693,7 +697,66 @@ function planListHtml(layout, { compact = false } = {}) {
       <p class="plan-summary">${result.total} Schuss, ${result.reloads === 0 ? "kein Magazinwechsel" : `${result.reloads} Magazinwechsel`} geplant (Magazin ${settings.magCapacity}${settings.chamberLoaded ? "+1" : ""})</p>
       ${result.warnings.map(w => `<p class="plan-warning">⚠ ${escapeHtml(w)}</p>`).join("")}
       ${result.missing.length ? `<p class="plan-warning">Nicht im Plan: ${escapeHtml(result.missing.join(", "))}</p>` : ""}
+      ${compact ? "" : `<button type="button" class="tool-btn" id="plan-play-btn">▶ Ablauf abspielen</button>`}
     </div>`;
+}
+
+// Spielt den Schussplan automatisch durch: eine Markierung wandert im Zeitabstand
+// über die Skizze, die passende Zeile in der Liste wird mitmarkiert. Keine echte
+// Zeitsimulation (dafür fehlen reale Split-Zeiten) – ein fester Takt fürs mentale
+// Durchgehen der Reihenfolge vor dem Stand.
+const PLAN_PLAYBACK_TARGET_MS = 900;
+const PLAN_PLAYBACK_RELOAD_MS = 1500;
+const planPlayback = { token: 0, timeouts: [] };
+
+function stopPlanWalkthrough() {
+  planPlayback.token++;
+  planPlayback.timeouts.forEach(clearTimeout);
+  planPlayback.timeouts = [];
+  const marker = document.getElementById("plan-play-marker");
+  if (marker) marker.remove();
+  detailContent.querySelectorAll(".plan-steps li.plan-active").forEach(li => li.classList.remove("plan-active"));
+  const btn = document.getElementById("plan-play-btn");
+  if (btn) { btn.textContent = "▶ Ablauf abspielen"; btn.dataset.playing = "0"; }
+}
+
+function playPlanWalkthrough(layout) {
+  const steps = planSteps(layout);
+  // Gezielt in detailContent suchen: der Stage-Editor-Vorschau (#builder-preview)
+  // trägt dieselbe Klasse .layout-svg-wrap und ist immer im DOM vorhanden.
+  const svg = detailContent.querySelector(".layout-svg-wrap svg");
+  if (!steps.length || !svg) return;
+  stopPlanWalkthrough();
+  const token = ++planPlayback.token;
+  const btn = document.getElementById("plan-play-btn");
+  if (btn) { btn.textContent = "⏸ Stoppen"; btn.dataset.playing = "1"; }
+
+  const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  marker.setAttribute("id", "plan-play-marker");
+  marker.setAttribute("class", "plan-play-marker");
+  marker.setAttribute("r", "16");
+  svg.appendChild(marker);
+
+  const listItems = [...detailContent.querySelectorAll(".plan-steps > li")];
+
+  const advance = (i) => {
+    if (token !== planPlayback.token) return;
+    listItems.forEach(li => li.classList.remove("plan-active"));
+    if (i >= steps.length) { stopPlanWalkthrough(); return; }
+    const step = steps[i];
+    const li = listItems[i];
+    if (li) { li.classList.add("plan-active"); li.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+    if (step.type === "target") {
+      marker.setAttribute("cx", step.target.x);
+      marker.setAttribute("cy", step.target.y);
+      marker.classList.remove("plan-play-marker-reload");
+    } else {
+      marker.classList.add("plan-play-marker-reload");
+    }
+    const delay = step.type === "reload" ? PLAN_PLAYBACK_RELOAD_MS : PLAN_PLAYBACK_TARGET_MS;
+    planPlayback.timeouts.push(setTimeout(() => advance(i + 1), delay));
+  };
+  advance(0);
 }
 
 function addPlanTarget(index) {
@@ -2303,6 +2366,10 @@ function openDetail(drill, options = {}) {
   initParTimer();
   const sketchBtn = document.getElementById("sketch-image-btn");
   if (sketchBtn) sketchBtn.addEventListener("click", () => saveSketchImage(drill));
+  const playBtn = document.getElementById("plan-play-btn");
+  if (playBtn) playBtn.addEventListener("click", () => {
+    if (playBtn.dataset.playing === "1") stopPlanWalkthrough(); else playPlanWalkthrough(drill.layout || {});
+  });
 
   if (preview) {
     renderPreviewActions(drill);
@@ -2351,6 +2418,7 @@ function renderPreviewActions(drill) {
 
 function closeDetail() {
   stopParTimer();
+  stopPlanWalkthrough();
   clearSharedLinkFromUrl();
   const wasOpen = !overlay.classList.contains("hidden");
   overlay.classList.add("hidden");
@@ -2693,6 +2761,9 @@ function parTimerHtml(drill) {
         <label class="score-field"><span>Durchgänge</span><input type="number" id="timer-reps" step="1" min="1" max="50" inputmode="numeric" value="${settings.timerReps}"></label>
       </div>
       <label class="timer-mic-toggle"><input type="checkbox" id="timer-mic"> Schüsse per Mikrofon erkennen <span class="badge difficulty">Beta</span></label>
+      <label class="timer-mic-toggle" title="Anders als der Rest der App: Die Spracherkennung läuft über den Browser und schickt dafür Audio an dessen Anbieter (z.B. Google bei Chrome) – nicht an diese App oder ihren Server.">
+        <input type="checkbox" id="timer-voice"> Per Sprachbefehl starten („Standby“) <span class="badge difficulty">Beta</span>
+      </label>
       <div class="timer-shots hidden" id="timer-shots" aria-live="polite"></div>
       <div class="timer-actions">
         <button type="button" class="save-btn timer-start" id="timer-start">Start</button>
@@ -2708,13 +2779,17 @@ function initParTimer() {
   const startBtn = document.getElementById("timer-start");
   const stopBtn = document.getElementById("timer-stop");
   if (!startBtn) return;
-  startBtn.addEventListener("click", startParTimer);
+  startBtn.addEventListener("click", () => {
+    const voiceBox = document.getElementById("timer-voice");
+    if (voiceBox && voiceBox.checked && !voiceBox.disabled) armVoiceStart(); else startParTimer();
+  });
   document.getElementById("timer-take-time").addEventListener("click", takeMicTimeIntoScore);
   document.getElementById("timer-to-score").addEventListener("click", jumpToScoreForm);
   stopBtn.addEventListener("click", () => {
     stopParTimer();
     setTimerText("Gestoppt", "Auf Start tippen", "");
   });
+  initVoiceStart();
 }
 
 function setTimerToScoreVisible(visible) {
@@ -2792,6 +2867,55 @@ async function requestWakeLock() {
   try {
     if (navigator.wakeLock) parTimer.wakeLock = await navigator.wakeLock.request("screen");
   } catch (e) { /* nicht unterstützt oder abgelehnt */ }
+}
+
+// ---------- Sprachstart ----------
+// Ersetzt den Tippvorgang auf "Start" durch das Zuhören auf ein Signalwort – praktisch,
+// wenn man mit der Waffe schon in der Startposition steht und die Hände nicht frei hat.
+// Web Speech API: von Chrome/Edge (Desktop wie Android) unterstützt, nicht von Firefox
+// und nur eingeschränkt von Safari/iOS – deshalb die Prüfung in initVoiceStart().
+
+function initVoiceStart() {
+  const checkbox = document.getElementById("timer-voice");
+  if (!checkbox) return;
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    checkbox.disabled = true;
+    checkbox.closest("label").title = "Sprachstart wird von diesem Browser nicht unterstützt.";
+    return;
+  }
+  const recognition = new Recognition();
+  recognition.lang = "de-DE";
+  recognition.continuous = true;
+  recognition.interimResults = false;
+  recognition.onresult = (e) => {
+    const said = normalizeSearch(e.results[e.results.length - 1][0].transcript);
+    if (VOICE_START_WORDS.some(word => said.includes(word))) {
+      disarmVoiceStart();
+      startParTimer();
+    }
+  };
+  recognition.onend = () => {
+    // Browser beenden die Erkennung nach einer Stille von selbst – solange noch
+    // scharf gestellt ist, gleich neu starten.
+    if (parTimer.voiceArmed) { try { recognition.start(); } catch (e) { /* schon aktiv */ } }
+  };
+  recognition.onerror = () => { /* z.B. "no-speech" – wird über onend neu gestartet */ };
+  parTimer.voiceRecognition = recognition;
+}
+
+function armVoiceStart() {
+  if (!parTimer.voiceRecognition) { startParTimer(); return; }
+  stopParTimer();
+  parTimer.voiceArmed = true;
+  setTimerRunning(true);
+  setTimerText("Höre zu …", "Sag „Standby“, um zu starten", "armed");
+  try { parTimer.voiceRecognition.start(); } catch (e) { /* schon aktiv */ }
+}
+
+function disarmVoiceStart() {
+  parTimer.voiceArmed = false;
+  if (parTimer.voiceRecognition) { try { parTimer.voiceRecognition.stop(); } catch (e) { /* schon gestoppt */ } }
 }
 
 async function startParTimer() {
@@ -3020,6 +3144,7 @@ function stopParTimer() {
   parTimer.nodes.forEach(osc => { try { osc.stop(); } catch (e) { /* schon beendet */ } });
   parTimer.nodes = [];
   stopMicListening();
+  disarmVoiceStart();
   parTimer.startAudio = null;
   releaseWakeLock();
   if (parTimer.running) setTimerRunning(false);

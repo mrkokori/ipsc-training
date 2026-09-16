@@ -348,6 +348,48 @@ async function testShotPlan() {
   ok(JSON.stringify(bad.plan) === JSON.stringify([{ type: "target", index: 0 }, { type: "reload" }]), "ungültige Planschritte werden verworfen");
 }
 
+async function testPlanWalkthrough() {
+  section("Ablauf-Animation");
+  let { w, E, $ } = boot();
+  const presi = E("DRILLS").find((d) => d.id === "std-el-presidente");
+  E("openDetail")(presi);
+  ok($("#plan-play-btn") && $("#plan-play-btn").textContent.includes("Ablauf abspielen"), "Abspiel-Button erscheint bei einem Training mit Schussplan");
+  ok(!$("#plan-play-marker"), "keine Markierung, bevor abgespielt wird");
+
+  $("#plan-play-btn").click();
+  ok($("#plan-play-btn").textContent.includes("Stoppen"), "Button wechselt beim Abspielen zu „Stoppen“");
+  const steps = E("planSteps")(presi.layout);
+  const marker = $("#plan-play-marker");
+  ok(marker && Number(marker.getAttribute("cx")) === steps[0].target.x && Number(marker.getAttribute("cy")) === steps[0].target.y, "Markierung steht zu Beginn auf dem ersten Ziel");
+  ok($(".plan-steps > li").classList.contains("plan-active"), "erste Zeile im Schussplan ist markiert");
+
+  await sleep(950);
+  const liList = [...w.document.querySelectorAll(".plan-steps > li")];
+  ok(!liList[0].classList.contains("plan-active") && liList[1].classList.contains("plan-active"), "Animation springt nach dem Takt zur nächsten Zeile");
+  ok(Number($("#plan-play-marker").getAttribute("cx")) === steps[1].target.x, "Markierung folgt dem zweiten Schritt");
+
+  E("stopPlanWalkthrough")();
+  ok(!$("#plan-play-marker") && $("#plan-play-btn").textContent.includes("Ablauf abspielen") && !liList.some((li) => li.classList.contains("plan-active")), "Stoppen räumt Markierung, Button und Markierungen auf");
+
+  // Schließen der Detailansicht während des Abspielens räumt ebenfalls auf
+  $("#plan-play-btn").click();
+  E("closeDetail")();
+  ok(!w.document.getElementById("plan-play-marker"), "Schließen der Detailansicht beendet eine laufende Animation");
+
+  // Trainings ohne Schussplan zeigen keinen Button
+  const noPlan = { title: "Ohne Plan", category: "Test", procedure: "x", layout: { targets: [{ type: "paper", x: 10, y: 10 }] } };
+  E("openDetail")(noPlan);
+  ok(!$("#plan-play-btn"), "kein Abspiel-Button ohne Schussplan");
+  E("closeDetail")();
+
+  // Raster-Skizze (Bild statt Vektor-Layout) hat kein SVG - Abspielen bricht sauber ab
+  const withImage = { ...presi, sketchDataUrl: "data:image/png;base64,AAAA" };
+  E("openDetail")(withImage);
+  $("#plan-play-btn").click();
+  ok(!$("#plan-play-marker"), "ohne SVG (Bild-Skizze) wird nichts animiert");
+  E("closeDetail")();
+}
+
 async function testStageEditor() {
   section("Stage-Editor und neue Symbole");
   let { w, E, $, $$ } = boot();
@@ -722,6 +764,44 @@ async function testMicrophone() {
   ok(E("settings").micSensitivity === 9, "Empfindlichkeit in den Einstellungen gespeichert");
 }
 
+async function testVoiceStart() {
+  section("Sprachstart des Par-Timers");
+
+  // Ohne SpeechRecognition (Standard in jsdom): Checkbox ist deaktiviert, mit Erklärung
+  let { w, E, $ } = boot();
+  E("openDetail")(E("DRILLS").find((d) => d.id === "std-bill-drill"));
+  ok($("#timer-voice").disabled && /nicht unterstützt/.test($("#timer-voice").closest("label").title), "Sprachstart-Checkbox ohne Browser-Unterstützung deaktiviert");
+  E("closeDetail")();
+
+  class FakeRecognition {
+    constructor() { this.started = false; }
+    start() { this.started = true; }
+    stop() { if (this.started) { this.started = false; if (this.onend) this.onend(); } }
+    fireResult(text) { this.onresult({ results: [[{ transcript: text }]] }); }
+  }
+  ({ w, E, $ } = boot({ beforeApp: (win) => { win.SpeechRecognition = FakeRecognition; } }));
+  E("openDetail")(E("DRILLS").find((d) => d.id === "std-bill-drill"));
+  ok(!$("#timer-voice").disabled, "Checkbox aktiv, wenn der Browser Spracherkennung unterstützt");
+  $("#timer-voice").checked = true;
+  $("#timer-start").click();
+  const rec = E("parTimer").voiceRecognition;
+  ok(rec.started && E("parTimer").voiceArmed && /Höre zu/.test($("#timer-display").textContent) && $("#timer-stop").disabled === false, "Start scharf gestellt: Spracherkennung läuft, Timer noch nicht");
+  rec.fireResult("bitte auf standby gehen");
+  ok(!E("parTimer").voiceArmed && !rec.started && E("parTimer").running, "erkanntes Signalwort löst den echten Timer-Start aus");
+  E("stopParTimer")();
+
+  // Falsches Wort löst nichts aus
+  $("#timer-voice").checked = true;
+  $("#timer-start").click();
+  E("parTimer").voiceRecognition.fireResult("irgendein anderer satz");
+  ok(E("parTimer").voiceArmed && /Höre zu/.test($("#timer-display").textContent), "ein nicht erkanntes Wort startet den Timer nicht");
+
+  // Stopp während des Zuhörens bricht sauber ab
+  $("#timer-stop").click();
+  ok(!E("parTimer").voiceArmed && !E("parTimer").voiceRecognition.started, "Stopp während des Zuhörens deaktiviert die Spracherkennung");
+  E("closeDetail")();
+}
+
 async function testInstallAndExportReminder() {
   section("App-Installation, Export-Erinnerung");
 
@@ -1038,7 +1118,7 @@ function testLicenseFiles() {
 }
 
 (async () => {
-  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testStageEditor, testMatches, testPlans, testTrainingSuggestion, testStats, testMicrophone, testInstallAndExportReminder, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
+  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testPlanWalkthrough, testStageEditor, testMatches, testPlans, testTrainingSuggestion, testStats, testMicrophone, testVoiceStart, testInstallAndExportReminder, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
     try { await suite(); } catch (e) { failed++; console.log("  ✗ Testblock abgebrochen: " + (e && e.stack || e)); }
   }
   console.log(`\n${passed} bestanden, ${failed} fehlgeschlagen`);

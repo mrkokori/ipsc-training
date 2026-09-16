@@ -1263,6 +1263,34 @@ html[data-fontsize="large"] { font-size: 118%; }
 [data-theme="light"] .plan-warning { color: #9a5a00; }
 .plan-compact { margin-top: 6px; }
 
+#plan-play-btn { margin-top: 8px; }
+
+.plan-steps li.plan-active {
+  border-color: var(--accent);
+  background: rgba(232, 98, 12, 0.15);
+}
+
+/* Ablauf-Animation: Markierung im SVG folgt dem Schussplan, siehe playPlanWalkthrough() */
+.plan-play-marker {
+  fill: rgba(232, 98, 12, 0.25);
+  stroke: var(--accent);
+  stroke-width: 3;
+  pointer-events: none;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: plan-play-pulse 0.9s ease-in-out infinite;
+}
+
+.plan-play-marker.plan-play-marker-reload {
+  stroke: #7fb0e8;
+  fill: rgba(127, 176, 232, 0.2);
+}
+
+@keyframes plan-play-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.55; }
+}
+
 /* ---------- Matches & Pläne ---------- */
 .stage-card {
   border: 1px solid var(--border);
