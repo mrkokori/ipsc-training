@@ -11,7 +11,7 @@ let customPlans = [];
 let planProgress = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.9";
+const APP_VERSION = "2026.09.10";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -184,6 +184,18 @@ const TOOL_HINTS = {
 };
 const DRAG_HINT = " Bereits gesetzte Elemente kannst du direkt anfassen und verschieben.";
 
+// Sammelt Teile der App, die beim Start fehlgeschlagen sind (siehe safeInit unten).
+const initFailures = [];
+
+// __proto__/constructor/prototype werden von cleanId() verworfen, weil IDs aus importierten
+// oder gespeicherten Dateien später als Objekt-Schlüssel verwendet werden (result[id] = …).
+// Sonst könnte eine manipulierte Datei das Prototype eines internen Objekts überschreiben.
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
+// Escaped auch Anführungszeichen, damit maskierte Werte nicht aus einem
+// HTML-Attribut ausbrechen können (z.B. value="${escapeHtml(x)}").
+const ESCAPE_HTML_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
 init();
 
 async function init() {
@@ -224,13 +236,14 @@ async function init() {
     updateFavoriteFilterButton();
     render();
   });
-  initSettingsDialog();
-  initJournal();
-  initMatches();
-  initPlans();
-  initPrintTargets();
+  safeInit("Einstellungen", initSettingsDialog);
+  safeInit("Trainingstagebuch", initJournal);
+  safeInit("Matches", initMatches);
+  safeInit("Trainingspläne", initPlans);
+  safeInit("Druckvorlagen", initPrintTargets);
   document.getElementById("export-csv-btn").addEventListener("click", exportScoresCsv);
   document.getElementById("update-reload-btn").addEventListener("click", () => location.reload());
+  document.getElementById("init-failure-reload-btn").addEventListener("click", reloadAndClearOfflineStorage);
   closeBtn.addEventListener("click", closeDetail);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) closeDetail(); });
   document.addEventListener("keydown", (e) => {
@@ -258,8 +271,8 @@ async function init() {
     importFileInput.value = "";
   });
 
-  initBuilder();
-  initEquipmentMultiselect();
+  safeInit("Stage-Editor", initBuilder);
+  safeInit("Ausrüstungsauswahl", initEquipmentMultiselect);
 
   if (localStorage.getItem(STORAGE_WARNING_KEY) !== "1") storageWarning.classList.remove("hidden");
   storageWarningClose.addEventListener("click", () => {
@@ -267,8 +280,43 @@ async function init() {
     localStorage.setItem(STORAGE_WARNING_KEY, "1");
   });
 
-  handleSharedLinkFromUrl();
-  initServiceWorker();
+  safeInit("Teilen-Link", handleSharedLinkFromUrl);
+  safeInit("Offline-Speicher", initServiceWorker);
+
+  if (initFailures.length) showInitFailureWarning();
+}
+
+// Startet einen Teil der App, ohne dass ein Fehler darin den Rest der Initialisierung
+// abbricht (z.B. wenn HTML und app.js kurz nach einem Update aus unterschiedlichen
+// Versionen stammen). Betroffene Teile werden in initFailures gesammelt und dem Nutzer angezeigt.
+function safeInit(label, fn) {
+  try {
+    fn();
+  } catch (e) {
+    console.error(`Initialisierung fehlgeschlagen: ${label}`, e);
+    initFailures.push(label);
+  }
+}
+
+function showInitFailureWarning() {
+  const el = document.getElementById("init-failure-warning");
+  const text = document.getElementById("init-failure-text");
+  if (!el || !text) return;
+  text.textContent = `⚠️ Diese Teile der App konnten nicht gestartet werden: ${initFailures.join(", ")}. Das passiert meist kurz nach einem Update, wenn alte und neue Dateien gemischt geladen wurden.`;
+  el.classList.remove("hidden");
+}
+
+// Löscht zusätzlich zum normalen Neuladen den Offline-Speicher (Service-Worker-Cache),
+// damit sich alte und neue Dateiversionen nicht länger mischen können.
+async function reloadAndClearOfflineStorage() {
+  try {
+    if (window.caches) await Promise.all((await caches.keys()).map(k => caches.delete(k)));
+    if (navigator.serviceWorker) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+  } catch (e) { /* trotzdem neu laden */ }
+  location.reload();
 }
 
 // ---------- Storage helpers ----------
@@ -1601,7 +1649,7 @@ function cleanArr(v, max = 500) {
 }
 
 function cleanId(v) {
-  return typeof v === "string" && v.length > 0 && v.length <= 200 ? v : null;
+  return typeof v === "string" && v.length > 0 && v.length <= 200 && !UNSAFE_KEYS.has(v) ? v : null;
 }
 
 function isValidSketchDataUrl(v) {
@@ -2027,9 +2075,7 @@ function unlockBodyScroll() {
 }
 
 function escapeHtml(str) {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
+  return String(str).replace(/[&<>"']/g, (c) => ESCAPE_HTML_MAP[c]);
 }
 
 // ---------- Score log / Hit-Factor tracking (personal, not shared on export) ----------

@@ -699,6 +699,75 @@ async function testBriefingJournalPrint() {
   ok(w.document.documentElement.dataset.theme === "light", "Design „wie am Gerät“ folgt der Systemeinstellung");
 }
 
+async function testSecurityHardening() {
+  section("Sicherheit: Escaping, Prototype-Schutz, Start-Fehler");
+  let { w, E, $ } = boot();
+
+  // escapeHtml() maskiert auch Anführungszeichen, sonst kann ein Wert mit " aus
+  // einem HTML-Attribut ausbrechen (value="${escapeHtml(x)}").
+  ok(E("escapeHtml")('"\'<>&') === "&quot;&#39;&lt;&gt;&amp;", "escapeHtml maskiert \" ' < > &");
+
+  // Match-Formular: Name, Division, Notizen und Stage-Name sind freier Text ohne
+  // Zeichen-Einschränkung – hier muss escapeHtml den Angriff abfangen.
+  E("renderMatchForm")(null, { name: evilValue, date: "2026-01-01", division: evilValue, major: false, notes: evilValue, stages: [{ name: evilValue }] });
+  ok(!$("#match-content [onerror]") && $("#m-name").value === evilValue && $("#m-division").value === evilValue && $(".stage-name").value === evilValue,
+    "Match-Formular: Name/Division/Stage-Name brechen nicht aus dem Attribut aus");
+
+  // Trainingsplan-Formular: Titel, Beschreibung, Tag-Name und Umfang
+  E("renderPlanForm")(null, { title: evilValue, description: evilValue, days: [{ title: evilValue, type: "dry", items: [{ drillId: "std-bill-drill", reps: evilValue }] }] });
+  ok(!$("#plans-content [onerror]") && $("#pl-title").value === evilValue && $(".pl-day-title").value === evilValue,
+    "Plan-Formular: Titel/Tag-Name brechen nicht aus dem Attribut aus");
+
+  // Tagebuch-Formular: Ort
+  E("renderJournalForm")({ date: "2026-01-01", type: "live", location: evilValue, rounds: 0, minutes: 0, drillIds: [], notes: evilValue });
+  ok(!$("#journal-content [onerror]") && $("#j-location").value === evilValue, "Tagebuch-Formular: Ort bricht nicht aus dem Attribut aus");
+
+  // __proto__/constructor als Schlüssel aus localStorage oder Import dürfen das
+  // Prototype der internen Maps nicht überschreiben (result[key] = wert).
+  ({ w, E } = boot({
+    storage: {
+      ipscScoreLogs: JSON.parse('{"__proto__":[{"date":"2026-01-01T00:00:00.000Z","alpha":1,"time":1}]}'),
+      ipscEditedBuiltins: JSON.parse('{"__proto__":{"title":"x","category":"y","procedure":"z"}}'),
+      ipscPlanProgress: JSON.parse('{"__proto__":{"done":{"0":"2026-01-01"}}}')
+    }
+  }));
+  // Vergleich gegen w.Object.prototype, nicht Object.prototype: jsdom führt app.js
+  // in einer eigenen Realm aus, die ihr eigenes Object.prototype mitbringt.
+  ok(Object.getPrototypeOf(E("scoreLogs")) === w.Object.prototype, "scoreLogs: __proto__-Schlüssel verändert das Prototype nicht");
+  ok(Object.getPrototypeOf(E("editedBuiltins")) === w.Object.prototype, "editedBuiltins: __proto__-Schlüssel verändert das Prototype nicht");
+  ok(Object.getPrototypeOf(E("planProgress")) === w.Object.prototype, "planProgress: __proto__-Schlüssel verändert das Prototype nicht");
+
+  // Start-Fehler: ein Teil, der beim Start eine Ausnahme wirft, darf die übrigen
+  // Teile nicht mitreißen (Ursache für die früheren Tab-/Stage-Editor-Ausfälle).
+  ({ w, E, $ } = boot());
+  ok($("#init-failure-warning").classList.contains("hidden"), "kein Hinweis, wenn beim Start alles funktioniert");
+  let ranAfterFailure = false;
+  E("safeInit")("Kaputter Teil", () => { throw new Error("kaputt"); });
+  E("safeInit")("Teil danach", () => { ranAfterFailure = true; });
+  ok(ranAfterFailure, "ein fehlschlagender Teil bricht die übrigen Teile nicht ab");
+  E("showInitFailureWarning")();
+  ok(!$("#init-failure-warning").classList.contains("hidden") && /Kaputter Teil/.test($("#init-failure-text").textContent),
+    "Hinweisbalken nennt den fehlgeschlagenen Teil");
+}
+
+function testHtmlHardening() {
+  section("HTML-Grundgerüst: CSP, Versionierung, Aufräumen");
+  const html = read("index.html");
+  ok(/<meta http-equiv="Content-Security-Policy" content="[^"]*default-src 'self'[^"]*script-src 'self'[^"]*style-src 'self'[^"]*">/.test(html),
+    "Content-Security-Policy-Meta-Tag schränkt Skripte/Styles auf 'self' ein");
+  ok(!/unsafe-inline|unsafe-eval/.test(html), "CSP erlaubt kein unsafe-inline/unsafe-eval");
+
+  const appVersion = /const APP_VERSION = "([^"]+)"/.exec(read("app.js"))[1];
+  const v = appVersion.replace(/\./g, "\\.");
+  ok(new RegExp(`<script src="app\\.js\\?v=${v}">`).test(html), "app.js wird mit Versionsnummer geladen (Cache-Busting nach einem Update)");
+  ok(new RegExp(`<script src="data/drills\\.js\\?v=${v}">`).test(html), "data/drills.js wird mit Versionsnummer geladen");
+  ok(new RegExp(`<script src="lib/qrcode\\.js\\?v=${v}">`).test(html), "lib/qrcode.js wird mit Versionsnummer geladen");
+
+  ok(fs.existsSync(path.join(ROOT, ".github/workflows/tests.yml")), "Test-Workflow für GitHub Actions ist vorhanden");
+  ok(!fs.existsSync(path.join(ROOT, "Tests")), "alter, doppelter Tests-Ordner ist entfernt");
+  ok(!fs.existsSync(path.join(ROOT, "artifact-index.html")), "artifact-index.html ist entfernt");
+}
+
 function testLicenseFiles() {
   section("Lizenz");
   const license = read("LICENSE");
@@ -710,7 +779,7 @@ function testLicenseFiles() {
 }
 
 (async () => {
-  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testBriefingJournalPrint, testShotPlan, testStageEditor, testMatches, testPlans, testMicrophone, testUpdateBanner, testServiceWorker, testLicenseFiles]) {
+  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testBriefingJournalPrint, testShotPlan, testStageEditor, testMatches, testPlans, testMicrophone, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
     try { await suite(); } catch (e) { failed++; console.log("  ✗ Testblock abgebrochen: " + (e && e.stack || e)); }
   }
   console.log(`\n${passed} bestanden, ${failed} fehlgeschlagen`);
