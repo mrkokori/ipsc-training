@@ -79,6 +79,7 @@
     </label>
     <button id="import-btn" type="button" class="tool-btn">⭱ Importieren</button>
     <button id="import-link-btn" type="button" class="tool-btn">🔗 Link einfügen</button>
+    <button id="share-multi-btn" type="button" class="tool-btn">📦 Mehrere teilen</button>
     <input type="file" id="import-file-input" accept="application/json" class="hidden">
     <button id="export-csv-btn" type="button" class="tool-btn">⭳ Ergebnisse als CSV</button>
     <button id="settings-btn" type="button" class="tool-btn">⚙ Einstellungen</button>
@@ -360,8 +361,15 @@
   </div>
 </div>
 
-<script src="data/drills.js?v=2026.09.11"></script>
-<script src="lib/qrcode.js?v=2026.09.11"></script>
-<script src="app.js?v=2026.09.11"></script>
+<div id="multishare-overlay" class="overlay hidden">
+  <div class="detail-panel" role="dialog" aria-modal="true" aria-label="Mehrere Übungen teilen">
+    <button id="multishare-close" class="close-btn" aria-label="Schließen">×</button>
+    <div id="multishare-content"></div>
+  </div>
+</div>
+
+<script src="data/drills.js?v=2026.09.12"></script>
+<script src="lib/qrcode.js?v=2026.09.12"></script>
+<script src="app.js?v=2026.09.12"></script>
 </body>
 </html>

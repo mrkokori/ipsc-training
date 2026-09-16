@@ -11,7 +11,7 @@ let customPlans = [];
 let planProgress = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.11";
+const APP_VERSION = "2026.09.12";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -76,6 +76,7 @@ const parTimer = { ctx: null, token: 0, timeouts: [], nodes: [], rafId: 0, wakeL
 
 // Teilen per Link
 const SHARE_HASH_PREFIX = "#t=";
+const SHARE_MULTI_HASH_PREFIX = "#tm=";
 const MAX_SHARED_BYTES = 200000;
 
 const state = { category: "", difficulty: "", equipment: "", search: "", favoritesOnly: false };
@@ -242,6 +243,7 @@ async function init() {
   safeInit("Statistik", initStats);
   safeInit("Trainingspläne", initPlans);
   safeInit("Druckvorlagen", initPrintTargets);
+  safeInit("Mehrere teilen", initMultiShare);
   document.getElementById("export-csv-btn").addEventListener("click", exportScoresCsv);
   document.getElementById("update-reload-btn").addEventListener("click", () => location.reload());
   document.getElementById("init-failure-reload-btn").addEventListener("click", reloadAndClearOfflineStorage);
@@ -250,7 +252,7 @@ async function init() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (closeStageEditor()) return;
-      closeDetail(); closeCreate(); closeSettings(); closeJournal(); closePrintTargets(); closeMatches(); closePlans(); closeStats();
+      closeDetail(); closeCreate(); closeSettings(); closeJournal(); closePrintTargets(); closeMatches(); closePlans(); closeStats(); closeMultiShare();
     }
   });
 
@@ -3001,6 +3003,20 @@ async function buildShareLink(drill) {
   return location.origin + location.pathname + SHARE_HASH_PREFIX + prefix + bytesToBase64Url(payload);
 }
 
+// Wie buildShareLink, aber für mehrere Übungen auf einmal (eigener Hash-Präfix
+// #tm=, damit sich Links mit einer und mit mehreren Übungen unterscheiden lassen).
+async function buildMultiShareLink(drills) {
+  const bytes = new TextEncoder().encode(JSON.stringify(drills.map(compactForLink)));
+  let prefix = "p", payload = bytes;
+  if (typeof CompressionStream === "function") {
+    try {
+      payload = await transformBytes(bytes, new CompressionStream("deflate-raw"), MAX_SHARED_BYTES);
+      prefix = "z";
+    } catch (e) { /* ohne Kompression weiter */ }
+  }
+  return location.origin + location.pathname + SHARE_MULTI_HASH_PREFIX + prefix + bytesToBase64Url(payload);
+}
+
 async function decodeSharedHash(hash) {
   const m = /#t=([zp])([A-Za-z0-9_-]+)$/.exec(hash || "");
   if (!m) return null;
@@ -3013,15 +3029,28 @@ async function decodeSharedHash(hash) {
   return sanitizeDrill(JSON.parse(new TextDecoder().decode(bytes)));
 }
 
+async function decodeMultiSharedHash(hash) {
+  const m = /#tm=([zp])([A-Za-z0-9_-]+)$/.exec(hash || "");
+  if (!m) return null;
+  let bytes = base64UrlToBytes(m[2]);
+  if (bytes.length > MAX_SHARED_BYTES) throw new Error("Link zu lang");
+  if (m[1] === "z") {
+    if (typeof DecompressionStream !== "function") throw new Error("Browser zu alt");
+    bytes = await transformBytes(bytes, new DecompressionStream("deflate-raw"), MAX_SHARED_BYTES * 5);
+  }
+  const arr = JSON.parse(new TextDecoder().decode(bytes));
+  return Array.isArray(arr) ? cleanArr(arr, 100).map(sanitizeDrill).filter(Boolean) : null;
+}
+
 function clearSharedLinkFromUrl() {
-  if (location.hash.startsWith(SHARE_HASH_PREFIX) && history.replaceState) {
+  if ((location.hash.startsWith(SHARE_HASH_PREFIX) || location.hash.startsWith(SHARE_MULTI_HASH_PREFIX)) && history.replaceState) {
     history.replaceState(null, "", location.pathname + location.search);
   }
 }
 
 async function handleSharedLinkFromUrl() {
-  if (!location.hash.startsWith(SHARE_HASH_PREFIX)) return;
-  await openSharedDrill(location.hash);
+  if (location.hash.startsWith(SHARE_MULTI_HASH_PREFIX)) { await openMultiSharedDrills(location.hash); return; }
+  if (location.hash.startsWith(SHARE_HASH_PREFIX)) await openSharedDrill(location.hash);
 }
 
 async function openSharedDrill(hash) {
@@ -3047,9 +3076,35 @@ async function openSharedDrill(hash) {
   openDetail(drill, { preview: true });
 }
 
+// Wie openSharedDrill, aber für einen Link mit mehreren Übungen (siehe
+// buildMultiShareLink). Fragt vorher kurz nach, weil dabei – anders als bei
+// einer einzelnen Übung – mehrere Einträge auf einmal in die Bibliothek kommen.
+async function openMultiSharedDrills(hash) {
+  let drills;
+  try {
+    drills = await decodeMultiSharedHash(hash);
+  } catch (e) {
+    drills = null;
+  }
+  clearSharedLinkFromUrl();
+  if (!drills || !drills.length) {
+    alert("Der Trainings-Link ist unvollständig oder beschädigt. Lass ihn dir bitte noch einmal schicken.");
+    return;
+  }
+  const titles = drills.map(d => d.title);
+  const preview = titles.slice(0, 8).join(", ") + (titles.length > 8 ? `, +${titles.length - 8} weitere` : "");
+  if (!confirm(`${drills.length} Übung(en) aus dem Link:\n${preview}\n\nZu deiner Bibliothek hinzufügen?`)) return;
+  addSharedDrills(drills);
+}
+
 function importFromPastedLink() {
   const text = prompt("Geteilten Trainings-Link hier einfügen:");
   if (!text) return;
+  const multiIdx = text.indexOf(SHARE_MULTI_HASH_PREFIX);
+  if (multiIdx >= 0) {
+    openMultiSharedDrills(text.slice(multiIdx).trim());
+    return;
+  }
   const idx = text.indexOf(SHARE_HASH_PREFIX);
   if (idx < 0) {
     alert("Das ist kein Trainings-Link. Er muss „#t=“ enthalten.");
@@ -3075,6 +3130,33 @@ function addSharedDrill(drill) {
   closeDetail();
   showDbMsg(`"${clean.title}" wurde zu deinen Trainings hinzugefügt.`);
   openDetail(DRILLS.find(d => d.id === saved.id));
+}
+
+// Wie addSharedDrill, aber für mehrere Übungen auf einmal (aus openMultiSharedDrills).
+function addSharedDrills(drills) {
+  let added = 0, duplicates = 0, invalid = 0, lastSaved = null;
+  for (const raw of drills) {
+    const clean = sanitizeDrill(raw);
+    if (!clean) { invalid++; continue; }
+    const fp = JSON.stringify(clean);
+    const existing = customDrills.find(d => drillFingerprint(d) === fp);
+    if (existing) { duplicates++; lastSaved = existing; continue; }
+    lastSaved = { ...clean, id: newCustomId(), custom: true };
+    customDrills.push(lastSaved);
+    added++;
+  }
+  if (added) saveCustomDrills();
+  mergeDrills();
+  populateFilters();
+  updateRestoreButton();
+  render();
+  closeDetail();
+  const parts = [];
+  if (added) parts.push(`${added} Übung(en) hinzugefügt`);
+  if (duplicates) parts.push(`${duplicates} bereits vorhanden`);
+  if (invalid) parts.push(`${invalid} ungültig`);
+  showDbMsg(parts.length ? parts.join(", ") + "." : "Keine gültigen Übungen im Link gefunden.");
+  if (lastSaved) openDetail(DRILLS.find(d => d.id === lastSaved.id));
 }
 
 function toggleSharePanel(drill) {
@@ -3376,6 +3458,150 @@ async function shareDrill(drill) {
   // Desktop (and any browser without file-sharing support): download a real file to send on
   downloadJSON(json, filename);
   showDbMsg(`"${drill.title}" als Datei "${filename}" heruntergeladen – kannst du direkt an Kollegen weitergeben (z.B. per Mail oder Chat anhängen).`);
+}
+
+// Wie shareDrill, aber für mehrere Übungen auf einmal: nutzt dasselbe Dateiformat
+// wie „Alles exportieren“ (type ipsc-training-export), damit importFile() sie ohne
+// Änderungen entgegennimmt.
+async function shareDrillsAsFile(drills) {
+  if (!drills.length) return;
+  const payload = { type: "ipsc-training-export", version: 1, exportedAt: new Date().toISOString(), customDrills: drills.map(stripForSharing) };
+  const json = JSON.stringify(payload, null, 2);
+  const filename = drills.length === 1 ? "ipsc-" + slugify(drills[0].title) + ".json" : `ipsc-auswahl-${drills.length}.json`;
+
+  if (navigator.share && navigator.canShare) {
+    try {
+      const file = new File([json], filename, { type: "application/json" });
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+        return;
+      }
+    } catch (e) {
+      if (e && e.name === "AbortError") return;
+    }
+  }
+
+  downloadJSON(json, filename);
+  showDbMsg(`${drills.length} Übung(en) als Datei "${filename}" heruntergeladen.`);
+}
+
+// ---------- Mehrere Übungen teilen (Auswahl + Link/QR/Datei für alle auf einmal) ----------
+
+function initMultiShare() {
+  const overlayEl = document.getElementById("multishare-overlay");
+  document.getElementById("share-multi-btn").addEventListener("click", openMultiShare);
+  document.getElementById("multishare-close").addEventListener("click", closeMultiShare);
+  overlayEl.addEventListener("click", (e) => { if (e.target === overlayEl) closeMultiShare(); });
+}
+
+function openMultiShare() {
+  renderMultiShare();
+  const overlayEl = document.getElementById("multishare-overlay");
+  if (overlayEl.classList.contains("hidden")) {
+    overlayEl.classList.remove("hidden");
+    lockBodyScroll();
+  }
+}
+
+function closeMultiShare() {
+  const overlayEl = document.getElementById("multishare-overlay");
+  if (!overlayEl || overlayEl.classList.contains("hidden")) return;
+  overlayEl.classList.add("hidden");
+  unlockBodyScroll();
+}
+
+function renderMultiShare() {
+  const box = document.getElementById("multishare-content");
+  box.innerHTML = `
+    <h2>Mehrere Übungen teilen</h2>
+    <p class="settings-note">Übungen auswählen und als einen gemeinsamen Link oder QR-Code teilen – praktisch, um mehrere am PC gezeichnete Stages aufs Handy zu bekommen.</p>
+    <input type="search" id="ms-search" class="journal-search" placeholder="Übung suchen …" autocomplete="off">
+    <div class="journal-drills" id="ms-drills">
+      ${DRILLS.map(d => `<label class="journal-drill" data-search="${escapeHtml(drillSearchText(d))}"><input type="checkbox" value="${escapeHtml(d.id)}"> ${escapeHtml(d.title)}</label>`).join("")}
+    </div>
+    <div class="share-options">
+      <span id="ms-count">0 ausgewählt</span>
+      <button type="button" class="tool-btn" id="ms-link-btn" disabled>Link teilen</button>
+      <button type="button" class="tool-btn" id="ms-qr-btn" disabled>QR-Code zeigen</button>
+      <button type="button" class="tool-btn" id="ms-file-btn" disabled>Als Datei</button>
+    </div>
+    <div id="ms-output" class="share-output"></div>
+  `;
+
+  const search = document.getElementById("ms-search");
+  search.addEventListener("input", () => {
+    const terms = normalizeSearch(search.value).split(/\s+/).filter(Boolean);
+    box.querySelectorAll(".journal-drill").forEach(label => {
+      label.classList.toggle("hidden", !terms.every(t => label.dataset.search.includes(t)));
+    });
+  });
+
+  const countEl = document.getElementById("ms-count");
+  const linkBtn = document.getElementById("ms-link-btn");
+  const qrBtn = document.getElementById("ms-qr-btn");
+  const fileBtn = document.getElementById("ms-file-btn");
+  const output = document.getElementById("ms-output");
+  const selectedDrills = () => [...box.querySelectorAll(".journal-drill input:checked")]
+    .map(cb => DRILLS.find(d => d.id === cb.value)).filter(Boolean);
+  const updateCount = () => {
+    const n = selectedDrills().length;
+    countEl.textContent = n === 1 ? "1 ausgewählt" : `${n} ausgewählt`;
+    linkBtn.disabled = qrBtn.disabled = fileBtn.disabled = n === 0;
+    output.innerHTML = "";
+  };
+  box.querySelectorAll(".journal-drill input").forEach(cb => cb.addEventListener("change", updateCount));
+
+  const showLinkField = (link, note) => {
+    output.innerHTML = `
+      <p class="share-note">${escapeHtml(note)}</p>
+      <input type="text" class="share-link-field" readonly value="${escapeHtml(link)}" aria-label="Trainings-Link">
+    `;
+    const field = output.querySelector(".share-link-field");
+    field.addEventListener("focus", () => field.select());
+  };
+
+  linkBtn.addEventListener("click", async () => {
+    const drills = selectedDrills();
+    if (!drills.length) return;
+    const link = await buildMultiShareLink(drills);
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `${drills.length} IPSC-Übungen`, text: `${drills.length} IPSC-Übungen`, url: link });
+        showLinkField(link, "Link geteilt. Du kannst ihn hier auch kopieren:");
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return;
+      }
+    }
+    let copied = false;
+    try {
+      if (navigator.clipboard) { await navigator.clipboard.writeText(link); copied = true; }
+    } catch (e) { /* Kopieren nicht erlaubt */ }
+    showLinkField(link, copied ? "Link in die Zwischenablage kopiert:" : "Link zum Kopieren:");
+  });
+
+  qrBtn.addEventListener("click", async () => {
+    const drills = selectedDrills();
+    if (!drills.length) return;
+    const link = await buildMultiShareLink(drills);
+    if (typeof qrcode !== "function") {
+      showLinkField(link, "QR-Code ist gerade nicht verfügbar. Hier ist der Link:");
+      return;
+    }
+    try {
+      const qr = qrcode(0, "L");
+      qr.addData(link);
+      qr.make();
+      output.innerHTML = `
+        <div class="qr-wrap">${qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true })}</div>
+        <p class="share-note">Mit der Handykamera scannen, um die ${drills.length} Übungen zu öffnen.</p>
+      `;
+    } catch (e) {
+      showLinkField(link, "Die Auswahl ist zu umfangreich für einen QR-Code. Teile stattdessen den Link, oder wähle weniger Übungen aus:");
+    }
+  });
+
+  fileBtn.addEventListener("click", () => shareDrillsAsFile(selectedDrills()));
 }
 
 function importFile(file) {

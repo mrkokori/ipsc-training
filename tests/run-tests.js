@@ -30,6 +30,8 @@ function boot({ builtins = true, storage = {}, hash = "", beforeApp } = {}) {
   w.scrollTo = () => {};
   w.HTMLElement.prototype.scrollIntoView = function () {};
   w.alert = (m) => { w.lastAlert = m; };
+  w.confirm = (m) => { w.lastConfirm = m; return w.confirmAnswer !== false; };
+  w.prompt = () => w.promptAnswer;
   for (const [k, v] of Object.entries(storage)) w.localStorage.setItem(k, JSON.stringify(v));
   if (beforeApp) beforeApp(w);
   w.eval(builtins ? read("data/drills.js") : "window.IPSC_DRILLS = [];");
@@ -225,6 +227,68 @@ async function testSharingAndSketch() {
   $("#sketch-image-btn").click(); await sleep(50);
   ok(/SVG/.test($("#sketch-msg").textContent), "ohne PNG-Unterstützung wird eine SVG-Grafik gespeichert");
   E("closeDetail")();
+}
+
+async function testMultiShare() {
+  section("Mehrere Übungen teilen");
+  let { w, E, $, $$ } = boot();
+
+  const presi = E("DRILLS").find((d) => d.id === "std-el-presidente");
+  const bill = E("DRILLS").find((d) => d.id === "std-bill-drill");
+  const link = await E("buildMultiShareLink")([presi, bill]);
+  const hash = link.slice(link.indexOf("#"));
+  ok(link.includes("#tm=z"), "Mehrfach-Link nutzt eigenen Hash-Präfix #tm=");
+  const decoded = await E("decodeMultiSharedHash")(hash);
+  ok(decoded.length === 2 && decoded[0].title === presi.title && decoded[1].title === bill.title, "Mehrfach-Link dekodiert beide Übungen");
+
+  // UI: Auswahl treffen, Link + QR erzeugen
+  $("#share-multi-btn").click();
+  ok(!$("#multishare-overlay").classList.contains("hidden"), "Dialog öffnet sich");
+  $("#ms-search").value = "presidente";
+  $("#ms-search").dispatchEvent(new w.Event("input"));
+  ok($$(".journal-drill:not(.hidden)").length === 1, "Suche filtert die Übungsliste");
+  $("#ms-search").value = "";
+  $("#ms-search").dispatchEvent(new w.Event("input"));
+  $(`.journal-drill input[value="std-el-presidente"]`).click();
+  $(`.journal-drill input[value="std-bill-drill"]`).click();
+  ok($("#ms-count").textContent === "2 ausgewählt" && !$("#ms-link-btn").disabled, "Auswahl zählt mit und schaltet die Buttons frei");
+  $("#ms-link-btn").click(); await sleep(20);
+  ok($(".share-link-field").value.includes("#tm="), "Link-Button zeigt einen Mehrfach-Link");
+  $("#ms-qr-btn").click(); await sleep(50);
+  ok($(".qr-wrap svg path"), "QR-Code für die Auswahl wird erzeugt");
+  E("closeMultiShare")();
+  ok(E("bodyScrollLockCount") === 0, "Scroll-Sperre nach dem Dialog aufgehoben");
+
+  // Empfang: bestätigen fügt beide hinzu, lehnt man ab passiert nichts
+  ({ w, E, $ } = boot());
+  w.confirmAnswer = false;
+  await E("openMultiSharedDrills")(hash);
+  ok(E("customDrills").length === 0, "Ablehnen im Bestätigungsdialog fügt nichts hinzu");
+  w.confirmAnswer = true;
+  await E("openMultiSharedDrills")(hash);
+  ok(E("customDrills").length === 2, "Bestätigen fügt beide Übungen hinzu");
+  await E("openMultiSharedDrills")(hash);
+  ok(E("customDrills").length === 2 && /bereits vorhanden/.test($("#db-tools-msg").textContent), "erneutes Einlesen erzeugt keine Duplikate");
+  E("closeDetail")();
+
+  // kaputter Link
+  w.lastAlert = null;
+  await E("openMultiSharedDrills")("#tm=zAAAAkaputt");
+  ok(/beschädigt/.test(w.lastAlert || ""), "kaputter Mehrfach-Link: verständliche Meldung");
+
+  // manipulierte Daten im Mehrfach-Link führen keinen Code aus
+  const evil = [{ title: "x", category: "y", layout: { targets: [{ type: "paper", x: evilValue, y: 1 }] } }];
+  w.confirmAnswer = true;
+  await E("openMultiSharedDrills")("#tm=p" + E("bytesToBase64Url")(new TextEncoder().encode(JSON.stringify(evil)))); await sleep(20);
+  ok(!$("[onerror]") && w.pwned === undefined, "manipulierter Mehrfach-Link führt keinen Code aus");
+  E("closeDetail")();
+
+  // Link einfügen (Prompt) routet Mehrfach-Links korrekt
+  ({ w, E, $ } = boot());
+  w.promptAnswer = link;
+  w.confirmAnswer = true;
+  E("importFromPastedLink")(); await sleep(20);
+  ok(E("customDrills").length === 2, "„Link einfügen“ erkennt einen Mehrfach-Link und importiert beide Übungen");
 }
 
 async function testShotPlan() {
@@ -824,7 +888,7 @@ function testLicenseFiles() {
 }
 
 (async () => {
-  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testBriefingJournalPrint, testShotPlan, testStageEditor, testMatches, testPlans, testStats, testMicrophone, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
+  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testStageEditor, testMatches, testPlans, testStats, testMicrophone, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
     try { await suite(); } catch (e) { failed++; console.log("  ✗ Testblock abgebrochen: " + (e && e.stack || e)); }
   }
   console.log(`\n${passed} bestanden, ${failed} fehlgeschlagen`);
