@@ -1575,3 +1575,25 @@ body.stage-editor-open { overflow: hidden; }
     max-height: 45vh;
   }
 }
+
+/* Rückgängig-Hinweis nach dem Löschen: schwebt über allem außer dem
+   Vollbild-Stage-Editor (z-index 60), auch über offenen Overlays (z-index 10). */
+.undo-toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  font-size: 0.85rem;
+  max-width: calc(100vw - 32px);
+}
+
+.undo-toast.hidden { display: none; }

@@ -3,7 +3,7 @@
 // oder zu langsamem Netz die Version aus dem Cache. Nach dem ersten Öffnen
 // funktioniert die App damit auch ohne Empfang am Schießstand.
 // Bei jeder Veröffentlichung hier UND in app.js (APP_VERSION) erhöhen.
-const VERSION = "2026.09.13";
+const VERSION = "2026.09.14";
 const CACHE_NAME = "ipsc-training-" + VERSION;
 const NETWORK_TIMEOUT_MS = 3000;
 const ASSETS = [

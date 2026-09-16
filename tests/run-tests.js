@@ -90,7 +90,20 @@ async function testScoringAndSecurity() {
   E("toggleFavorite")("custom-1");
   E("deleteDrill")(E("DRILLS").find((d) => d.id === "custom-1"));
   ok(!E("scoreLogs")["custom-1"] && !E("favorites").has("custom-1"), "Löschen entfernt Ergebnisse und Favorit");
+  ok(!$("#undo-toast").classList.contains("hidden") && /Übergänge & Reloads/.test($("#undo-toast-text").textContent), "Rückgängig-Hinweis nennt die gelöschte Übung");
+  E("performUndo")();
+  ok(E("customDrills").some((d) => d.id === "custom-1") && E("scoreLogs")["custom-1"] && E("favorites").has("custom-1") && $("#undo-toast").classList.contains("hidden"),
+    "Rückgängig stellt eigene Übung, Ergebnisse und Favorit wieder her");
+
   ok(E("slugify")("Übergänge & Reloads") === "uebergaenge-reloads", "Dateinamen mit Umlauten");
+
+  // Standard-Übung löschen nutzt den anderen Zweig von deleteDrill (deletedBuiltinIds statt customDrills)
+  const { E: E2 } = boot();
+  const presi = E2("DRILLS").find((d) => d.id === "std-el-presidente");
+  E2("deleteDrill")(presi);
+  ok(E2("deletedBuiltinIds").includes("std-el-presidente") && !E2("DRILLS").some((d) => d.id === "std-el-presidente"), "Standard-Übung löschen");
+  E2("performUndo")();
+  ok(!E2("deletedBuiltinIds").includes("std-el-presidente") && E2("DRILLS").some((d) => d.id === "std-el-presidente"), "Rückgängig stellt gelöschte Standard-Übung wieder her");
 }
 
 async function testLibrarySearchFavorites() {
@@ -476,6 +489,9 @@ async function testMatches() {
   ok(JSON.parse(w.localStorage.getItem("ipscMatches"))[0].stages.length === 1, "Stage entfernen und speichern");
   $("#m-edit").click(); $("#m-delete").click();
   ok(JSON.parse(w.localStorage.getItem("ipscMatches")).length === 0, "Match löschen");
+  ok(!$("#undo-toast").classList.contains("hidden") && /Vienna Open/.test($("#undo-toast-text").textContent), "Rückgängig-Hinweis nennt das gelöschte Match");
+  E("performUndo")();
+  ok(JSON.parse(w.localStorage.getItem("ipscMatches")).length === 1 && $("#undo-toast").classList.contains("hidden"), "Rückgängig stellt das Match wieder her");
   E("closeMatches")();
   ok(E("bodyScrollLockCount") === 0, "Scroll-Sperre nach Matches aufgehoben");
 }
@@ -519,8 +535,48 @@ async function testPlans() {
   ok($$(".plan-item").length === 4, "eigener Plan erscheint in der Liste");
   $$(".plan-item")[3].click(); $("#plan-delete").click();
   ok(JSON.parse(w.localStorage.getItem("ipscPlans")).length === 0, "eigenen Plan löschen");
+  ok(!$("#undo-toast").classList.contains("hidden") && /Mein Plan/.test($("#undo-toast-text").textContent), "Rückgängig-Hinweis nennt den gelöschten Plan");
+  E("performUndo")();
+  ok(JSON.parse(w.localStorage.getItem("ipscPlans")).length === 1, "Rückgängig stellt den Plan wieder her");
+  $$(".plan-item")[3].click(); $("#plan-delete").click();
+  E("hideUndoToast")();
+  ok(JSON.parse(w.localStorage.getItem("ipscPlans")).length === 0, "geschlossener Hinweis macht die Löschung nicht rückgängig");
   E("closePlans")();
   ok(E("bodyScrollLockCount") === 0, "Scroll-Sperre nach Plänen aufgehoben");
+}
+
+async function testTrainingSuggestion() {
+  section("Trainingsvorschlag auf der Startseite");
+
+  let { w, E, $ } = boot();
+  ok($("#training-suggestion").classList.contains("hidden"), "kein Vorschlag ohne Matches");
+
+  // Match mit klarem Verlust-Schwerpunkt (viele Misses)
+  const missMatch = {
+    id: "m1", name: "Vienna Open", date: "2026-06-01", division: "", major: false, notes: "",
+    stages: [{ id: "st1", name: "Stage 1", alpha: 5, charlie: 0, delta: 0, mike: 3, noshoot: 0, procedural: 0, time: 10, maxPoints: 0, winnerHF: 5 }]
+  };
+  ({ w, E, $ } = boot({ storage: { ipscMatches: [missMatch] } }));
+  ok(!$("#training-suggestion").classList.contains("hidden") && /Misses/.test($("#training-suggestion-text").textContent), "Vorschlag nennt den Verlust-Schwerpunkt (Misses)");
+  $("#training-suggestion-open").click();
+  ok(!$("#detail-overlay").classList.contains("hidden") && $("#detail-content h2"), "„Öffnen“ zeigt die vorgeschlagene Übung");
+  E("closeDetail")();
+
+  // Schließen merkt sich das für den heutigen Tag
+  ({ w, E, $ } = boot({ storage: { ipscMatches: [missMatch] } }));
+  $("#training-suggestion-close").click();
+  ok($("#training-suggestion").classList.contains("hidden"), "Hinweis lässt sich schließen");
+  const dismissedDate = w.localStorage.getItem("ipscTrainingSuggestionDismissedDate");
+  ({ w, E, $ } = boot({ storage: { ipscMatches: [missMatch] }, beforeApp: (win) => win.localStorage.setItem("ipscTrainingSuggestionDismissedDate", dismissedDate) }));
+  ok($("#training-suggestion").classList.contains("hidden"), "bleibt für den Rest des Tages ausgeblendet");
+
+  // Kein klarer Schwerpunkt (fast perfekte Stage) -> kein Vorschlag
+  const perfectMatch = {
+    id: "m2", name: "Perfekt", date: "2026-06-01", division: "", major: false, notes: "",
+    stages: [{ id: "st1", name: "Stage 1", alpha: 10, charlie: 0, delta: 0, mike: 0, noshoot: 0, procedural: 0, time: 8, maxPoints: 0, winnerHF: 6.25 }]
+  };
+  ({ w, E, $ } = boot({ storage: { ipscMatches: [perfectMatch] } }));
+  ok($("#training-suggestion").classList.contains("hidden"), "ohne klaren Verlust-Schwerpunkt gibt es keinen Vorschlag");
 }
 
 async function testStats() {
@@ -564,6 +620,36 @@ async function testStats() {
   ({ w, E, $ } = boot({ storage: { ipscScoreLogs: { "std-bill-drill": statsScoreLogs["std-bill-drill"] } } }));
   $("#stats-btn").click();
   ok(!/A-Quote im Verlauf/.test($("#stats-content").textContent) && !$("#stats-content svg"), "A-Quote-Verlauf bleibt bei nur einem Ergebnis aus");
+
+  // Trainingsserie: Wochen (Montag-Sonntag, UTC) relativ zu "jetzt", damit der Test
+  // unabhängig vom tatsächlichen Testdatum funktioniert.
+  const dateKeyDaysAgo = (n) => { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
+  const sessionOn = (id, dateKey) => ({ id, date: dateKey, type: "dry", location: "", rounds: 0, minutes: 10, drillIds: [], notes: "" });
+
+  ({ w, E, $ } = boot());
+  ok(E("trainingStreakWeeks")() === 0, "keine Serie ohne Trainingseinheiten");
+
+  ({ w, E, $ } = boot({ storage: { ipscSessions: [sessionOn("s1", dateKeyDaysAgo(0))] } }));
+  ok(E("trainingStreakWeeks")() === 1, "eine Einheit diese Woche: Serie von 1 Woche");
+  $("#stats-btn").click();
+  ok(/1 Woche in Folge/.test($("#stats-content").textContent), "Statistik zeigt die Serie (Einzahl)");
+
+  ({ w, E, $ } = boot({ storage: { ipscSessions: [
+    sessionOn("s1", dateKeyDaysAgo(0)), sessionOn("s2", dateKeyDaysAgo(7)), sessionOn("s3", dateKeyDaysAgo(14))
+  ] } }));
+  ok(E("trainingStreakWeeks")() === 3, "drei aufeinanderfolgende Wochen: Serie von 3");
+  $("#stats-btn").click();
+  ok(/3 Wochen in Folge/.test($("#stats-content").textContent), "Statistik zeigt die Serie (Mehrzahl)");
+
+  // Diese Woche noch nicht trainiert, aber letzte Woche schon: Serie gilt noch als aktuell
+  ({ w, E, $ } = boot({ storage: { ipscSessions: [sessionOn("s1", dateKeyDaysAgo(7)), sessionOn("s2", dateKeyDaysAgo(14))] } }));
+  ok(E("trainingStreakWeeks")() === 2, "diese Woche noch nichts, aber letzte 2 Wochen: Serie bleibt aktuell");
+
+  // Lücke von über einer Woche: Serie ist abgebrochen, egal wie lang sie mal war
+  ({ w, E, $ } = boot({ storage: { ipscSessions: [sessionOn("s1", dateKeyDaysAgo(21)), sessionOn("s2", dateKeyDaysAgo(28))] } }));
+  ok(E("trainingStreakWeeks")() === 0, "über eine Woche Pause: Serie abgebrochen");
+  $("#stats-btn").click();
+  ok(!/in Folge/.test($("#stats-content").textContent), "abgebrochene Serie erscheint nicht in der Statistik");
 }
 
 async function testMicrophone() {
@@ -817,6 +903,11 @@ async function testBriefingJournalPrint() {
   ok(stored[0].type === "dry" && stored[0].rounds === 0, "Trockentraining wird ohne Munition gespeichert");
   $$(".journal-item")[0].click(); $("#j-delete").click();
   ok(JSON.parse(w.localStorage.getItem("ipscSessions")).length === 0, "Einheit löschen");
+  ok(!$("#undo-toast").classList.contains("hidden"), "Rückgängig-Hinweis nach dem Löschen der Einheit");
+  E("performUndo")();
+  ok(JSON.parse(w.localStorage.getItem("ipscSessions")).length === 1, "Rückgängig stellt die Trainingseinheit wieder her");
+  $$(".journal-item")[0].click(); $("#j-delete").click(); E("hideUndoToast")();
+  ok(JSON.parse(w.localStorage.getItem("ipscSessions")).length === 0, "wieder gelöscht (für die folgenden Export/Import-Prüfungen)");
   E("closeJournal")();
   ok(E("bodyScrollLockCount") === 0, "Scroll-Sperre nach Tagebuch aufgehoben");
 
@@ -947,7 +1038,7 @@ function testLicenseFiles() {
 }
 
 (async () => {
-  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testStageEditor, testMatches, testPlans, testStats, testMicrophone, testInstallAndExportReminder, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
+  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testStageEditor, testMatches, testPlans, testTrainingSuggestion, testStats, testMicrophone, testInstallAndExportReminder, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
     try { await suite(); } catch (e) { failed++; console.log("  ✗ Testblock abgebrochen: " + (e && e.stack || e)); }
   }
   console.log(`\n${passed} bestanden, ${failed} fehlgeschlagen`);

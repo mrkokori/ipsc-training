@@ -11,7 +11,7 @@ let customPlans = [];
 let planProgress = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.13";
+const APP_VERSION = "2026.09.14";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -33,6 +33,7 @@ const PLANS_KEY = "ipscPlans";
 const PLAN_PROGRESS_KEY = "ipscPlanProgress";
 const LAST_EXPORT_KEY = "ipscLastExportAt";
 const EXPORT_REMINDER_DAYS = 10;
+const TRAINING_SUGGESTION_DISMISSED_KEY = "ipscTrainingSuggestionDismissedDate";
 const DIVISIONS = ["Production", "Production Optics", "Standard", "Open", "Classic", "Revolver", "PCC"];
 const THEMES = ["dark", "light", "system"];
 
@@ -202,6 +203,28 @@ const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 // HTML-Attribut ausbrechen können (z.B. value="${escapeHtml(x)}").
 const ESCAPE_HTML_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 
+// Von analyzeMatch() und checkTrainingSuggestion() beim Start gebraucht (siehe unten),
+// deshalb hier vor init() statt bei der übrigen Match-Auswertung weiter unten im Code.
+const LOSS_LABELS = { charlie: "C-Treffer", delta: "D-Treffer", mike: "Misses", noshoot: "No-Shoots", procedural: "Procedurals" };
+const LOSS_HINTS = {
+  charlie: "je 1 (Major) bzw. 2 (Minor) weniger als A",
+  delta: "je 3 (Major) bzw. 4 (Minor) weniger als A",
+  mike: "je 10 Strafpunkte, dazu fehlen die 5 Punkte des Treffers",
+  noshoot: "je 10 Strafpunkte",
+  procedural: "je 10 Strafpunkte"
+};
+
+// Empfehlungen je Verlust-Schwerpunkt – von der Match-Auswertung und vom
+// Trainingsvorschlag auf der Startseite genutzt (checkTrainingSuggestion).
+const MATCH_ADVICE = {
+  mike: { text: "Misses kosten dich am meisten: je 10 Strafpunkte, und die 5 Punkte des Treffers fehlen zusätzlich. Sichere Treffer vor Tempo.", drills: ["std-precision-distance", "std-doubles", "std-plates"] },
+  delta: { text: "Viele D-Treffer: Visierbild bestätigen, bevor der Schuss bricht.", drills: ["std-precision-distance", "std-distance-changes", "std-bill-drill"] },
+  charlie: { text: "Viele C-Treffer: Griff und Rückstoßkontrolle verbessern.", drills: ["std-doubles", "std-bill-drill", "std-distance-changes"] },
+  noshoot: { text: "No-Shoot-Treffer: Bei teilverdeckten Zielen bewusst genauer zielen.", drills: ["std-partial-targets"] },
+  procedural: { text: "Procedurals: Stage-Plan, Laufwege und Fault Lines trocken üben.", drills: ["std-box-to-box", "std-barricade", "std-shooting-on-move"] },
+  speed: { text: "Deine Treffer sind gut, verloren geht vor allem Zeit: Ziehen, Zielwechsel und Positionswechsel beschleunigen.", drills: ["std-draw-first-shot", "std-wide-transitions", "std-box-to-box", "std-shot-reload-shot"] }
+};
+
 init();
 
 async function init() {
@@ -292,6 +315,8 @@ async function init() {
   safeInit("Offline-Speicher", initServiceWorker);
   safeInit("Installations-Hinweis", initInstallPrompt);
   safeInit("Export-Erinnerung", checkExportReminder);
+  safeInit("Rückgängig-Hinweis", initUndoToast);
+  safeInit("Trainingsvorschlag", checkTrainingSuggestion);
 
   if (initFailures.length) showInitFailureWarning();
 }
@@ -743,24 +768,6 @@ function stageResult(stage, major) {
   };
 }
 
-const LOSS_LABELS = { charlie: "C-Treffer", delta: "D-Treffer", mike: "Misses", noshoot: "No-Shoots", procedural: "Procedurals" };
-const LOSS_HINTS = {
-  charlie: "je 1 (Major) bzw. 2 (Minor) weniger als A",
-  delta: "je 3 (Major) bzw. 4 (Minor) weniger als A",
-  mike: "je 10 Strafpunkte, dazu fehlen die 5 Punkte des Treffers",
-  noshoot: "je 10 Strafpunkte",
-  procedural: "je 10 Strafpunkte"
-};
-
-const MATCH_ADVICE = {
-  mike: { text: "Misses kosten dich am meisten: je 10 Strafpunkte, und die 5 Punkte des Treffers fehlen zusätzlich. Sichere Treffer vor Tempo.", drills: ["std-precision-distance", "std-doubles", "std-plates"] },
-  delta: { text: "Viele D-Treffer: Visierbild bestätigen, bevor der Schuss bricht.", drills: ["std-precision-distance", "std-distance-changes", "std-bill-drill"] },
-  charlie: { text: "Viele C-Treffer: Griff und Rückstoßkontrolle verbessern.", drills: ["std-doubles", "std-bill-drill", "std-distance-changes"] },
-  noshoot: { text: "No-Shoot-Treffer: Bei teilverdeckten Zielen bewusst genauer zielen.", drills: ["std-partial-targets"] },
-  procedural: { text: "Procedurals: Stage-Plan, Laufwege und Fault Lines trocken üben.", drills: ["std-box-to-box", "std-barricade", "std-shooting-on-move"] },
-  speed: { text: "Deine Treffer sind gut, verloren geht vor allem Zeit: Ziehen, Zielwechsel und Positionswechsel beschleunigen.", drills: ["std-draw-first-shot", "std-wide-transitions", "std-box-to-box", "std-shot-reload-shot"] }
-};
-
 function analyzeMatch(match) {
   const stages = match.stages.map(st => ({ stage: st, result: stageResult(st, match.major) }));
   const sum = (fn) => stages.reduce((n, x) => n + fn(x), 0);
@@ -786,6 +793,37 @@ function analyzeMatch(match) {
     return va - vb;
   });
   return { stages, ranked, points, maxPoints, lost, lostTotal: Object.values(lost).reduce((a, b) => a + b, 0), percent, accuracy, focus };
+}
+
+// ---------- Trainingsvorschlag auf der Startseite ----------
+// Nutzt den Verlust-Schwerpunkt (focus) des letzten Matches, den es für die
+// Match-Auswertung ohnehin schon gibt (siehe MATCH_ADVICE oben).
+
+function trainingSuggestion() {
+  if (!matches.length) return null;
+  const latest = matches.slice().sort((a, b) => b.date.localeCompare(a.date))[0];
+  const focus = analyzeMatch(latest).focus;
+  if (!focus) return null;
+  const advice = MATCH_ADVICE[focus];
+  const drill = advice.drills.map(id => DRILLS.find(d => d.id === id)).find(Boolean);
+  if (!drill) return null;
+  return { drill, text: advice.text };
+}
+
+function checkTrainingSuggestion() {
+  const today = localDateKey(new Date());
+  if (localStorage.getItem(TRAINING_SUGGESTION_DISMISSED_KEY) === today) return;
+  const suggestion = trainingSuggestion();
+  if (!suggestion) return;
+  const banner = document.getElementById("training-suggestion");
+  document.getElementById("training-suggestion-text").textContent =
+    `🎯 ${suggestion.text} Passend dazu: „${suggestion.drill.title}“.`;
+  banner.classList.remove("hidden");
+  document.getElementById("training-suggestion-open").addEventListener("click", () => openDetail(suggestion.drill));
+  document.getElementById("training-suggestion-close").addEventListener("click", () => {
+    banner.classList.add("hidden");
+    localStorage.setItem(TRAINING_SUGGESTION_DISMISSED_KEY, today);
+  });
 }
 
 // ---------- Statistik: Übersicht über alle Übungen und Trainings hinweg ----------
@@ -822,12 +860,38 @@ function allScoreEntries() {
   return all.sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// Woche als fortlaufende Zahl seit dem Unix-Epoch (Montag als Wochenbeginn), damit
+// aufeinanderfolgende Wochen sich einfach als Differenz 1 erkennen lassen – ohne die
+// Fallstricke von ISO-Kalenderwochen an Jahresgrenzen (Woche 52/53 → Woche 1).
+function weekIndex(dateKey) {
+  const d = new Date(dateKey + "T00:00:00Z");
+  const monday = new Date(d);
+  monday.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return Math.floor(monday.getTime() / (7 * 86400000));
+}
+
+// Aktuelle Serie in Wochen mit mindestens einer Trainingseinheit. Gilt nur als „aktuell“,
+// wenn die letzte trainierte Woche diese oder die vorige Woche war – sonst ist die Serie
+// abgebrochen (0), auch wenn früher mal länger am Stück trainiert wurde.
+function trainingStreakWeeks(now = new Date()) {
+  if (!sessions.length) return 0;
+  const weeks = [...new Set(sessions.map(s => weekIndex(s.date)))].sort((a, b) => a - b);
+  const currentWeek = weekIndex(localDateKey(now));
+  if (currentWeek - weeks[weeks.length - 1] > 1) return 0;
+  let streak = 1;
+  for (let i = weeks.length - 1; i > 0; i--) {
+    if (weeks[i] - weeks[i - 1] === 1) streak++; else break;
+  }
+  return streak;
+}
+
 function statsOverview() {
   return {
     sessions: sessions.length,
     roundsTotal: sessions.reduce((n, x) => n + x.rounds, 0),
     resultsTotal: allScoreEntries().length,
-    matches: matches.length
+    matches: matches.length,
+    streakWeeks: trainingStreakWeeks()
   };
 }
 
@@ -920,6 +984,7 @@ function renderStats() {
       <div class="stat-box"><div class="label">Verschossene Patronen</div><div class="value">${ov.roundsTotal}</div></div>
       <div class="stat-box"><div class="label">Erfasste Ergebnisse</div><div class="value">${ov.resultsTotal}</div></div>
       <div class="stat-box"><div class="label">Erfasste Matches</div><div class="value">${ov.matches}</div></div>
+      ${ov.streakWeeks > 0 ? `<div class="stat-box"><div class="label">Trainingsserie</div><div class="value">${ov.streakWeeks} Woche${ov.streakWeeks === 1 ? "" : "n"} in Folge</div></div>` : ""}
     </div>
 
     ${entries.length >= 2 ? `
@@ -1066,9 +1131,16 @@ function renderMatchForm(match, draft = null) {
   document.getElementById("m-cancel").addEventListener("click", () => match ? renderMatchAnalysis(match) : renderMatchList());
   if (match) {
     document.getElementById("m-delete").addEventListener("click", () => {
+      const removedIndex = matches.findIndex(x => x.id === match.id);
+      const removed = matches[removedIndex];
       matches = matches.filter(x => x.id !== match.id);
       saveMatches();
       renderMatchList();
+      showUndoToast(`"${match.name}" gelöscht.`, () => {
+        matches.splice(Math.min(removedIndex, matches.length), 0, removed);
+        saveMatches();
+        renderMatchList();
+      });
     });
   }
   document.getElementById("m-save").addEventListener("click", () => {
@@ -1317,11 +1389,21 @@ function renderPlanView(plan, message = "") {
   if (!plan.builtin) {
     document.getElementById("plan-edit").addEventListener("click", () => renderPlanForm(plan));
     document.getElementById("plan-delete").addEventListener("click", () => {
+      const removedIndex = customPlans.findIndex(pl => pl.id === plan.id);
+      const removed = customPlans[removedIndex];
+      const removedProgress = planProgress[plan.id];
       customPlans = customPlans.filter(pl => pl.id !== plan.id);
       delete planProgress[plan.id];
       saveCustomPlans();
       savePlanProgress();
       renderPlanList();
+      showUndoToast(`"${plan.title}" gelöscht.`, () => {
+        customPlans.splice(Math.min(removedIndex, customPlans.length), 0, removed);
+        if (removedProgress) planProgress[plan.id] = removedProgress;
+        saveCustomPlans();
+        savePlanProgress();
+        renderPlanList();
+      });
     });
   }
   box.querySelectorAll(".plan-drill").forEach(btn => btn.addEventListener("click", () => {
@@ -1645,9 +1727,16 @@ function renderJournalForm(session) {
   document.getElementById("j-cancel").addEventListener("click", renderJournalList);
   if (session) {
     document.getElementById("j-delete").addEventListener("click", () => {
+      const removedIndex = sessions.findIndex(x => x.id === session.id);
+      const removed = sessions[removedIndex];
       sessions = sessions.filter(x => x.id !== session.id);
       saveSessions();
       renderJournalList();
+      showUndoToast("Trainingseinheit gelöscht.", () => {
+        sessions.splice(Math.min(removedIndex, sessions.length), 0, removed);
+        saveSessions();
+        renderJournalList();
+      });
     });
   }
   document.getElementById("j-save").addEventListener("click", () => {
@@ -2279,6 +2368,38 @@ let bodyScrollY = 0;
 // geparst wird, sondern eine einzelne CSSStyleDeclaration-Eigenschaft gesetzt wird.
 function applyBarWidths(container) {
   container.querySelectorAll("[data-bar-width]").forEach(el => { el.style.width = el.dataset.barWidth; });
+}
+
+// ---------- Rückgängig-Hinweis nach dem Löschen ----------
+// Ein einzelner Hinweis reicht: eine neue Löschung ersetzt die vorherige Möglichkeit,
+// rückgängig zu machen (wie bei den meisten Apps üblich, statt einer Warteschlange).
+
+let undoState = null;
+
+function initUndoToast() {
+  document.getElementById("undo-toast-btn").addEventListener("click", performUndo);
+  document.getElementById("undo-toast-close").addEventListener("click", hideUndoToast);
+}
+
+function showUndoToast(message, restore) {
+  if (undoState) clearTimeout(undoState.timeoutId);
+  document.getElementById("undo-toast-text").textContent = message;
+  document.getElementById("undo-toast").classList.remove("hidden");
+  undoState = { restore, timeoutId: setTimeout(hideUndoToast, 8000) };
+}
+
+function hideUndoToast() {
+  if (undoState) clearTimeout(undoState.timeoutId);
+  undoState = null;
+  const toast = document.getElementById("undo-toast");
+  if (toast) toast.classList.add("hidden");
+}
+
+function performUndo() {
+  if (!undoState) return;
+  const restore = undoState.restore;
+  hideUndoToast();
+  restore();
 }
 
 function lockBodyScroll() {
@@ -3283,26 +3404,44 @@ function toggleSharePanel(drill) {
 // ---------- Create / edit / delete drills ----------
 
 function deleteDrill(drill) {
+  const refresh = () => { mergeDrills(); populateFilters(); updateRestoreButton(); render(); };
   if (drill.custom) {
+    const removedIndex = customDrills.findIndex(d => d.id === drill.id);
+    const removed = customDrills[removedIndex];
+    const wasFavorite = favorites.has(drill.id);
+    const removedScoreLog = scoreLogs[drill.id];
     customDrills = customDrills.filter(d => d.id !== drill.id);
     saveCustomDrills();
     if (favorites.delete(drill.id)) saveFavorites();
     // Ergebnisse gehören zum Training – sonst bleiben sie verwaist im Speicher.
     // (Bei Standard-Trainings bleiben sie erhalten, weil man diese wiederherstellen kann.)
-    if (scoreLogs[drill.id]) {
+    if (removedScoreLog) {
       delete scoreLogs[drill.id];
       saveScoreLogs();
     }
+    refresh();
+    showUndoToast(`"${drill.title}" gelöscht.`, () => {
+      customDrills.splice(Math.min(removedIndex, customDrills.length), 0, removed);
+      saveCustomDrills();
+      if (wasFavorite) { favorites.add(drill.id); saveFavorites(); }
+      if (removedScoreLog) { scoreLogs[drill.id] = removedScoreLog; saveScoreLogs(); }
+      refresh();
+    });
   } else {
+    const removedEdit = editedBuiltins[drill.id];
     if (!deletedBuiltinIds.includes(drill.id)) deletedBuiltinIds.push(drill.id);
     delete editedBuiltins[drill.id];
     saveDeletedBuiltins();
     saveEditedBuiltins();
+    refresh();
+    showUndoToast(`"${drill.title}" gelöscht.`, () => {
+      deletedBuiltinIds = deletedBuiltinIds.filter(id => id !== drill.id);
+      if (removedEdit) editedBuiltins[drill.id] = removedEdit;
+      saveDeletedBuiltins();
+      saveEditedBuiltins();
+      refresh();
+    });
   }
-  mergeDrills();
-  populateFilters();
-  updateRestoreButton();
-  render();
 }
 
 function openCreate() {

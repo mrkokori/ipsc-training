@@ -37,6 +37,11 @@
     <span id="export-reminder-text"></span>
     <button type="button" id="export-reminder-close" class="banner-close" aria-label="Hinweis schließen">×</button>
   </div>
+  <div id="training-suggestion" class="info-banner hidden" role="status">
+    <span id="training-suggestion-text"></span>
+    <button type="button" id="training-suggestion-open" class="save-btn">Öffnen</button>
+    <button type="button" id="training-suggestion-close" class="banner-close" aria-label="Hinweis schließen">×</button>
+  </div>
   <div id="init-failure-warning" class="info-banner hidden" role="alert">
     <span id="init-failure-text"></span>
     <button type="button" id="init-failure-reload-btn" class="save-btn">Neu laden</button>
@@ -377,8 +382,14 @@
   </div>
 </div>
 
-<script src="data/drills.js?v=2026.09.13"></script>
-<script src="lib/qrcode.js?v=2026.09.13"></script>
-<script src="app.js?v=2026.09.13"></script>
+<div id="undo-toast" class="undo-toast hidden" role="status">
+  <span id="undo-toast-text"></span>
+  <button type="button" id="undo-toast-btn" class="save-btn">Rückgängig</button>
+  <button type="button" id="undo-toast-close" class="banner-close" aria-label="Hinweis schließen">×</button>
+</div>
+
+<script src="data/drills.js?v=2026.09.14"></script>
+<script src="lib/qrcode.js?v=2026.09.14"></script>
+<script src="app.js?v=2026.09.14"></script>
 </body>
 </html>
