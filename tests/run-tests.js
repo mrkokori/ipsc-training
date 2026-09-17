@@ -398,6 +398,34 @@ async function testPlanWalkthrough() {
   $("#plan-play-btn").click();
   ok(!$("#plan-play-marker"), "ohne SVG (Bild-Skizze) wird nichts animiert");
   E("closeDetail")();
+
+  ok(!presi.layout.path.length, "El Presidente hat keinen Bewegungspfad");
+  E("openDetail")(presi);
+  $("#plan-play-btn").click();
+  ok(!$("#plan-play-shooter"), "ohne layout.path kein zusätzlicher Bewegungs-Marker");
+  E("stopPlanWalkthrough")();
+  E("closeDetail")();
+
+  // Bewegungsdrill mit layout.path: eigener Marker wandert parallel entlang des Pfads
+  const boxToBox = E("DRILLS").find((d) => d.id === "std-box-to-box");
+  E("openDetail")(boxToBox);
+  $("#plan-play-btn").click();
+  const shooter = $("#plan-play-shooter");
+  const [p0, p1] = boxToBox.layout.path;
+  ok(shooter && Number(shooter.getAttribute("cx")) === p0[0] && Number(shooter.getAttribute("cy")) === p0[1], "Bewegungs-Marker startet am Anfang des Pfads");
+
+  await sleep(450);
+  const midX = Number($("#plan-play-shooter").getAttribute("cx"));
+  ok(midX > Math.min(p0[0], p1[0]) && midX < Math.max(p0[0], p1[0]), "Bewegungs-Marker wandert zwischen Anfang und Ende des Pfads: x=" + midX);
+
+  E("stopPlanWalkthrough")();
+  ok(!$("#plan-play-shooter"), "Stoppen entfernt auch den Bewegungs-Marker");
+  E("closeDetail")();
+
+  const along = E("pointAlongPath");
+  ok(JSON.stringify(along([[0, 0], [10, 0], [10, 10]], 0)) === JSON.stringify({ x: 0, y: 0 }), "pointAlongPath: Anfang bei Anteil 0");
+  ok(JSON.stringify(along([[0, 0], [10, 0], [10, 10]], 1)) === JSON.stringify({ x: 10, y: 10 }), "pointAlongPath: Ende bei Anteil 1");
+  ok(JSON.stringify(along([[0, 0], [10, 0], [10, 10]], 0.5)) === JSON.stringify({ x: 10, y: 0 }), "pointAlongPath: Mitte der Gesamtlänge liegt am Eckpunkt");
 }
 
 async function testStageEditor() {

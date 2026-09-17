@@ -1356,6 +1356,14 @@ html[data-fontsize="large"] { font-size: 118%; }
   50% { transform: scale(1.3); opacity: 0.55; }
 }
 
+/* Läuft parallel zum Ziel-Marker entlang von layout.path, siehe playPlanWalkthrough() */
+.plan-play-shooter {
+  fill: #7fbf7f;
+  stroke: #0b0d10;
+  stroke-width: 1.5;
+  pointer-events: none;
+}
+
 /* ---------- Matches & Pläne ---------- */
 .stage-card {
   border: 1px solid var(--border);

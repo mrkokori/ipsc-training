@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17.1";
+const APP_VERSION = "2026.09.17.2";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -706,14 +706,42 @@ function planListHtml(layout, { compact = false } = {}) {
 // Durchgehen der Reihenfolge vor dem Stand.
 const PLAN_PLAYBACK_TARGET_MS = 900;
 const PLAN_PLAYBACK_RELOAD_MS = 1500;
-const planPlayback = { token: 0, timeouts: [] };
+const planPlayback = { token: 0, timeouts: [], rafId: null };
+
+// Punkt auf dem gezeichneten Bewegungspfad (layout.path) bei einem Anteil 0..1
+// der Gesamtlänge – lineare Interpolation entlang der Streckenabschnitte.
+function pointAlongPath(points, fraction) {
+  if (!points.length) return null;
+  if (points.length === 1) return { x: points[0][0], y: points[0][1] };
+  const segLens = [];
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const len = Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+    segLens.push(len);
+    total += len;
+  }
+  let remaining = Math.max(0, Math.min(1, fraction)) * total;
+  for (let i = 0; i < segLens.length; i++) {
+    if (remaining <= segLens[i] || i === segLens.length - 1) {
+      const t = segLens[i] === 0 ? 0 : Math.min(1, remaining / segLens[i]);
+      const p0 = points[i], p1 = points[i + 1];
+      return { x: p0[0] + (p1[0] - p0[0]) * t, y: p0[1] + (p1[1] - p0[1]) * t };
+    }
+    remaining -= segLens[i];
+  }
+  const last = points[points.length - 1];
+  return { x: last[0], y: last[1] };
+}
 
 function stopPlanWalkthrough() {
   planPlayback.token++;
   planPlayback.timeouts.forEach(clearTimeout);
   planPlayback.timeouts = [];
+  if (planPlayback.rafId !== null) { cancelAnimationFrame(planPlayback.rafId); planPlayback.rafId = null; }
   const marker = document.getElementById("plan-play-marker");
   if (marker) marker.remove();
+  const shooterMarker = document.getElementById("plan-play-shooter");
+  if (shooterMarker) shooterMarker.remove();
   detailContent.querySelectorAll(".plan-steps li.plan-active").forEach(li => li.classList.remove("plan-active"));
   const btn = document.getElementById("plan-play-btn");
   if (btn) { btn.textContent = "▶ Ablauf abspielen"; btn.dataset.playing = "0"; }
@@ -735,6 +763,34 @@ function playPlanWalkthrough(layout) {
   marker.setAttribute("class", "plan-play-marker");
   marker.setAttribute("r", "16");
   svg.appendChild(marker);
+
+  // Läuft der Schütze laut layout.path zwischen Positionen, wird das parallel zu
+  // den Ziel-Schritten als eigener, entlang des Pfads wandernder Marker animiert –
+  // im Gesamttempo der Wiedergabe, nicht pro Schritt (der Pfad ist nicht auf
+  // einzelne Plan-Schritte gemappt, nur auf Start und Ende der Bewegung).
+  const path = layout.path;
+  if (path && path.length > 1) {
+    const totalDuration = steps.reduce((sum, s) => sum + (s.type === "reload" ? PLAN_PLAYBACK_RELOAD_MS : PLAN_PLAYBACK_TARGET_MS), 0);
+    const shooterMarker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    shooterMarker.setAttribute("id", "plan-play-shooter");
+    shooterMarker.setAttribute("class", "plan-play-shooter");
+    shooterMarker.setAttribute("r", "9");
+    const start = pointAlongPath(path, 0);
+    shooterMarker.setAttribute("cx", start.x);
+    shooterMarker.setAttribute("cy", start.y);
+    svg.appendChild(shooterMarker);
+
+    const startTime = performance.now();
+    const tick = (now) => {
+      if (token !== planPlayback.token) return;
+      const fraction = totalDuration > 0 ? (now - startTime) / totalDuration : 1;
+      const p = pointAlongPath(path, fraction);
+      shooterMarker.setAttribute("cx", p.x);
+      shooterMarker.setAttribute("cy", p.y);
+      if (fraction < 1) planPlayback.rafId = requestAnimationFrame(tick);
+    };
+    planPlayback.rafId = requestAnimationFrame(tick);
+  }
 
   const listItems = [...detailContent.querySelectorAll(".plan-steps > li")];
 
