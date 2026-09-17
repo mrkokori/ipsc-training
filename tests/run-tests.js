@@ -375,6 +375,7 @@ async function testPlanWalkthrough() {
 
   await sleep(220);
   ok($$(".plan-play-bullet").length >= 1, "Patrone fliegt zum ersten Ziel");
+  ok($(".plan-play-bullet").getAttribute("fill") === "#ffd873", "Patrone: Farbe als Attribut (nicht nur CSS-Klasse), sonst zeigen sie manche Browser schwarz");
 
   await sleep(1000);
   const liList = [...w.document.querySelectorAll(".plan-steps > li")];
@@ -418,6 +419,7 @@ async function testPlanWalkthrough() {
   const shooter = $("#plan-play-shooter");
   const [p0, p1] = boxToBox.layout.path;
   ok(shooter && Number(shooter.getAttribute("cx")) === p0[0] && Number(shooter.getAttribute("cy")) === p0[1], "Bewegungs-Marker startet am Anfang des Pfads");
+  ok(shooter.getAttribute("fill") === "#7fbf7f", "Bewegungs-Marker: Farbe als Attribut (nicht nur CSS-Klasse)");
 
   await sleep(450);
   const midX = Number($("#plan-play-shooter").getAttribute("cx"));
@@ -437,6 +439,7 @@ async function testPlanWalkthrough() {
   $("#plan-play-btn").click();
   await sleep(1200);
   ok($(".plan-play-mag-out") && $(".plan-play-mag-in"), "Magazinwechsel: altes Magazin fällt heraus, neues rutscht nach");
+  ok($(".plan-play-mag-out").getAttribute("fill") === "#7fb0e8", "Magazin: Farbe als Attribut (nicht nur CSS-Klasse)");
   E("stopPlanWalkthrough")();
   ok(!$(".plan-play-mag-out"), "Stoppen entfernt auch die Magazin-Animation");
   E("closeDetail")();

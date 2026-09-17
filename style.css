@@ -1338,20 +1338,15 @@ html[data-fontsize="large"] { font-size: 118%; }
 /* Ablauf-Animation: eine Patrone pro Schuss fliegt vom Schützen zum Ziel,
    siehe fireBullet()/fireBulletsForStep() in app.js. Leuchtender Rand, damit
    sie auch im dunklen Theme bei der (bewusst langsamen) Flugzeit gut zu
-   erkennen ist. */
+   erkennen ist. Farbe/Kontur sitzen als Attribut direkt am Element (nicht
+   hier), damit Browser/Dark-Mode-Tools den Fill nicht auf Schwarz umfärben. */
 .plan-play-bullet {
-  fill: #ffd873;
-  stroke: #0b0d10;
-  stroke-width: 1.5;
   pointer-events: none;
   filter: drop-shadow(0 0 4px rgba(255, 216, 115, 0.9));
 }
 
 /* Sichtbarer Magazinwechsel bei Reload-Schritten, siehe playReloadEffect() */
 .plan-play-mag {
-  fill: #7fb0e8;
-  stroke: #0b0d10;
-  stroke-width: 1.5;
   pointer-events: none;
   transform-box: fill-box;
   transform-origin: center;
@@ -1371,11 +1366,9 @@ html[data-fontsize="large"] { font-size: 118%; }
   100% { transform: translateY(0); opacity: 1; }
 }
 
-/* Läuft parallel zum Ziel-Marker entlang von layout.path, siehe playPlanWalkthrough() */
+/* Läuft parallel zum Ziel-Marker entlang von layout.path, siehe
+   playPlanWalkthrough(). Farbe sitzt als Attribut am Element, siehe oben. */
 .plan-play-shooter {
-  fill: #7fbf7f;
-  stroke: #0b0d10;
-  stroke-width: 1.5;
   pointer-events: none;
 }
 

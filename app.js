@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17.5";
+const APP_VERSION = "2026.09.17.6";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -763,6 +763,11 @@ function nearestShooterOrigin(layout, point) {
 function fireBullet(svg, token, origin, target) {
   const bullet = document.createElementNS("http://www.w3.org/2000/svg", "circle");
   bullet.setAttribute("class", "plan-play-bullet");
+  // Farbe als Attribut statt nur per CSS-Klasse: manche Browser/Dark-Mode-Tools
+  // malen einen SVG-Fill, der nur über eine Stylesheet-Regel kommt, sonst schwarz.
+  bullet.setAttribute("fill", "#ffd873");
+  bullet.setAttribute("stroke", "#0b0d10");
+  bullet.setAttribute("stroke-width", "1.5");
   bullet.setAttribute("r", "6");
   bullet.setAttribute("cx", origin.x);
   bullet.setAttribute("cy", origin.y);
@@ -798,9 +803,11 @@ function playReloadEffect(svg, origin) {
   const x = origin.x + 24;
   const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
   g.setAttribute("class", "plan-play-reload");
+  // Farbe als Attribut statt nur per CSS-Klasse, siehe fireBullet().
+  const magAttrs = `fill="#7fb0e8" stroke="#0b0d10" stroke-width="1.5" x="${x - 7}" y="${origin.y - 16}" width="14" height="32" rx="3"`;
   g.innerHTML = `
-    <rect class="plan-play-mag plan-play-mag-out" x="${x - 7}" y="${origin.y - 16}" width="14" height="32" rx="3"/>
-    <rect class="plan-play-mag plan-play-mag-in" x="${x - 7}" y="${origin.y - 16}" width="14" height="32" rx="3"/>
+    <rect class="plan-play-mag plan-play-mag-out" ${magAttrs}/>
+    <rect class="plan-play-mag plan-play-mag-in" ${magAttrs}/>
   `;
   svg.appendChild(g);
   return g;
@@ -827,6 +834,10 @@ function playPlanWalkthrough(layout) {
     const shooterMarker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     shooterMarker.setAttribute("id", "plan-play-shooter");
     shooterMarker.setAttribute("class", "plan-play-shooter");
+    // Farbe als Attribut statt nur per CSS-Klasse, siehe fireBullet().
+    shooterMarker.setAttribute("fill", "#7fbf7f");
+    shooterMarker.setAttribute("stroke", "#0b0d10");
+    shooterMarker.setAttribute("stroke-width", "1.5");
     shooterMarker.setAttribute("r", "9");
     const start = pointAlongPath(path, 0);
     shooterMarker.setAttribute("cx", start.x);
