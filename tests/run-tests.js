@@ -412,22 +412,29 @@ async function testPlanWalkthrough() {
   E("stopPlanWalkthrough")();
   E("closeDetail")();
 
-  // Bewegungsdrill mit layout.path: eigener Marker wandert parallel entlang des Pfads
+  // Bewegungsdrill mit layout.path: das Schützen-Symbol selbst wandert
+  // (statt eines abstrakten Punkts) parallel entlang des Pfads
   const boxToBox = E("DRILLS").find((d) => d.id === "std-box-to-box");
   E("openDetail")(boxToBox);
   $("#plan-play-btn").click();
   const shooter = $("#plan-play-shooter");
-  const [p0, p1] = boxToBox.layout.path;
-  ok(shooter && Number(shooter.getAttribute("cx")) === p0[0] && Number(shooter.getAttribute("cy")) === p0[1], "Bewegungs-Marker startet am Anfang des Pfads");
-  ok(shooter.getAttribute("fill") === "#7fbf7f", "Bewegungs-Marker: Farbe als Attribut (nicht nur CSS-Klasse)");
+  ok(shooter && shooter.tagName === "polygon", "Bewegungs-Marker ist dasselbe Dreieck-Symbol wie die Schützenpositionen");
+  ok(shooter.getAttribute("fill") === "#e8620c", "Bewegungs-Marker: Farbe als Attribut (nicht nur CSS-Klasse)");
+  const startPoints = shooter.getAttribute("points");
 
   await sleep(450);
-  const midX = Number($("#plan-play-shooter").getAttribute("cx"));
-  ok(midX > Math.min(p0[0], p1[0]) && midX < Math.max(p0[0], p1[0]), "Bewegungs-Marker wandert zwischen Anfang und Ende des Pfads: x=" + midX);
+  ok($("#plan-play-shooter").getAttribute("points") !== startPoints, "Bewegungs-Marker wandert (Position ändert sich) entlang des Pfads");
 
   E("stopPlanWalkthrough")();
   ok(!$("#plan-play-shooter"), "Stoppen entfernt auch den Bewegungs-Marker");
   E("closeDetail")();
+
+  const tri = E("shooterTrianglePoints")(100, 100, 0).split(" ").map((p) => p.split(",").map(Number));
+  ok(tri.length === 3 && tri.every(([x, y]) => Math.abs(Math.hypot(x - 100, y - 100) - 12) < 0.001), "shooterTrianglePoints: alle drei Eckpunkte 12 Einheiten vom Zentrum entfernt");
+  ok(Math.abs(tri[0][0] - 100) < 0.001 && tri[0][1] < 100, "shooterTrianglePoints: Spitze zeigt bei facing=0 nach oben");
+
+  ok(Math.abs(E("directionAlongPath")([[0, 0], [10, 0]], 0.5) - 90) < 0.01, "directionAlongPath: waagrechte Strecke nach rechts = 90°");
+  ok(E("directionAlongPath")([[5, 5], [5, 5]], 0.5) === null, "directionAlongPath: keine Richtung, wenn sich der Pfad nicht bewegt");
 
   // Sichtbarer Magazinwechsel bei Reload-Schritten
   const reloadDrill = {

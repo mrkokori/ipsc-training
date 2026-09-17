@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17.6";
+const APP_VERSION = "2026.09.17.7";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -733,6 +733,21 @@ function pointAlongPath(points, fraction) {
   return { x: last[0], y: last[1] };
 }
 
+// Laufrichtung entlang des Pfads bei einem Anteil 0..1, als "facing"-Winkel
+// im selben Format wie shooterTrianglePoints() (0° = nach oben). null am
+// Pfadende, wo es keine weitere Richtung mehr gibt - der Aufrufer behält dann
+// einfach die zuletzt bekannte Ausrichtung bei.
+function directionAlongPath(points, fraction) {
+  const eps = 0.01;
+  const f2 = Math.min(1, fraction + eps);
+  const f1 = Math.max(0, f2 - eps);
+  const p1 = pointAlongPath(points, f1);
+  const p2 = pointAlongPath(points, f2);
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  if (!dx && !dy) return null;
+  return Math.atan2(dx, -dy) * 180 / Math.PI;
+}
+
 function stopPlanWalkthrough() {
   planPlayback.token++;
   planPlayback.timeouts.forEach(clearTimeout);
@@ -831,17 +846,16 @@ function playPlanWalkthrough(layout) {
   const path = layout.path;
   if (path && path.length > 1) {
     const totalDuration = steps.reduce((sum, s) => sum + (s.type === "reload" ? PLAN_PLAYBACK_RELOAD_MS : PLAN_PLAYBACK_TARGET_MS), 0);
-    const shooterMarker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    // Dasselbe Dreieck-Symbol wie die statischen Schützenpositionen, nicht nur
+    // ein abstrakter Punkt - sieht so aus, als würde der Schütze selbst laufen.
+    const shooterMarker = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
     shooterMarker.setAttribute("id", "plan-play-shooter");
     shooterMarker.setAttribute("class", "plan-play-shooter");
     // Farbe als Attribut statt nur per CSS-Klasse, siehe fireBullet().
-    shooterMarker.setAttribute("fill", "#7fbf7f");
-    shooterMarker.setAttribute("stroke", "#0b0d10");
-    shooterMarker.setAttribute("stroke-width", "1.5");
-    shooterMarker.setAttribute("r", "9");
+    shooterMarker.setAttribute("fill", "#e8620c");
+    let facing = (layout.shooterPositions && layout.shooterPositions[0] && layout.shooterPositions[0].facing) || 0;
     const start = pointAlongPath(path, 0);
-    shooterMarker.setAttribute("cx", start.x);
-    shooterMarker.setAttribute("cy", start.y);
+    shooterMarker.setAttribute("points", shooterTrianglePoints(start.x, start.y, facing));
     svg.appendChild(shooterMarker);
 
     const startTime = performance.now();
@@ -849,8 +863,8 @@ function playPlanWalkthrough(layout) {
       if (token !== planPlayback.token) return;
       const fraction = totalDuration > 0 ? (now - startTime) / totalDuration : 1;
       const p = pointAlongPath(path, fraction);
-      shooterMarker.setAttribute("cx", p.x);
-      shooterMarker.setAttribute("cy", p.y);
+      facing = directionAlongPath(path, fraction) ?? facing;
+      shooterMarker.setAttribute("points", shooterTrianglePoints(p.x, p.y, facing));
       if (fraction < 1) planPlayback.rafId = requestAnimationFrame(tick);
     };
     planPlayback.rafId = requestAnimationFrame(tick);
@@ -5210,21 +5224,28 @@ function dotsGridEl(dg) {
   return `<g>${els.join("")}</g>`;
 }
 
-function shooterEl(s) {
-  const rad = (s.facing || 0) * Math.PI / 180;
+// Dreieck-Umriss des Schützen-Symbols, "facing" in Grad im Uhrzeigersinn ab
+// Norden (0° = nach oben) – auch von der Ablauf-Animation genutzt, siehe
+// fireBullet()/playPlanWalkthrough() weiter oben, damit der wandernde Marker
+// exakt wie das statische Symbol aussieht.
+function shooterTrianglePoints(x, y, facing) {
+  const rad = (facing || 0) * Math.PI / 180;
   const size = 12;
-  const tipX = s.x + Math.sin(rad) * size;
-  const tipY = s.y - Math.cos(rad) * size;
+  const tipX = x + Math.sin(rad) * size;
+  const tipY = y - Math.cos(rad) * size;
   const baseAngle1 = rad + (150 * Math.PI / 180);
   const baseAngle2 = rad - (150 * Math.PI / 180);
-  const b1x = s.x + Math.sin(baseAngle1) * size;
-  const b1y = s.y - Math.cos(baseAngle1) * size;
-  const b2x = s.x + Math.sin(baseAngle2) * size;
-  const b2y = s.y - Math.cos(baseAngle2) * size;
+  const b1x = x + Math.sin(baseAngle1) * size;
+  const b1y = y - Math.cos(baseAngle1) * size;
+  const b2x = x + Math.sin(baseAngle2) * size;
+  const b2y = y - Math.cos(baseAngle2) * size;
+  return `${tipX},${tipY} ${b1x},${b1y} ${b2x},${b2y}`;
+}
 
+function shooterEl(s) {
   return `
     <g>
-      <polygon points="${tipX},${tipY} ${b1x},${b1y} ${b2x},${b2y}" fill="#e8620c"/>
+      <polygon points="${shooterTrianglePoints(s.x, s.y, s.facing)}" fill="#e8620c"/>
       ${textEl(s.x, s.y + 26, s.label, "#e8620c", 11)}
     </g>`;
 }

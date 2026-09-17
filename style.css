@@ -1367,9 +1367,12 @@ html[data-fontsize="large"] { font-size: 118%; }
 }
 
 /* Läuft parallel zum Ziel-Marker entlang von layout.path, siehe
-   playPlanWalkthrough(). Farbe sitzt als Attribut am Element, siehe oben. */
+   playPlanWalkthrough(). Farbe sitzt als Attribut am Element, siehe oben.
+   Leuchtrand hebt es von den statischen Schützen-Symbolen ab, mit denen es
+   sich an Start/Ziel des Pfads sonst optisch deckt. */
 .plan-play-shooter {
   pointer-events: none;
+  filter: drop-shadow(0 0 5px rgba(232, 98, 12, 0.85));
 }
 
 /* ---------- Matches & Pläne ---------- */
