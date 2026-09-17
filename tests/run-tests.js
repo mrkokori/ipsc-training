@@ -412,10 +412,20 @@ async function testPlanWalkthrough() {
   E("stopPlanWalkthrough")();
   E("closeDetail")();
 
-  // Bewegungsdrill mit layout.path: das Schützen-Symbol selbst wandert
-  // (statt eines abstrakten Punkts) parallel entlang des Pfads
-  const boxToBox = E("DRILLS").find((d) => d.id === "std-box-to-box");
-  E("openDetail")(boxToBox);
+  // Bewegungsdrill mit nur einer Schützenposition (wie "Schießen in
+  // Bewegung", das aber keinen Schussplan definiert): keine Haltepunkte
+  // möglich, das Schützen-Symbol läuft gleichmäßig über die Gesamtdauer.
+  const shootingOnMove = {
+    title: "Ein-Positions-Test", category: "Test", procedure: "x",
+    layout: {
+      viewW: 400, viewH: 500,
+      targets: [{ type: "paper", x: 120, y: 110, label: "T1" }, { type: "paper", x: 280, y: 110, label: "T2" }],
+      shooterPositions: [{ x: 80, y: 420, label: "Start", facing: 0 }],
+      path: [[80, 420], [320, 420]],
+      plan: [{ type: "target", index: 0 }, { type: "target", index: 1 }]
+    }
+  };
+  E("openDetail")(shootingOnMove);
   $("#plan-play-btn").click();
   const shooter = $("#plan-play-shooter");
   ok(shooter && shooter.tagName === "polygon", "Bewegungs-Marker ist dasselbe Dreieck-Symbol wie die Schützenpositionen");
@@ -427,6 +437,36 @@ async function testPlanWalkthrough() {
 
   E("stopPlanWalkthrough")();
   ok(!$("#plan-play-shooter"), "Stoppen entfernt auch den Bewegungs-Marker");
+  E("closeDetail")();
+
+  // Mehrere Schützenpositionen (z.B. "Box zu Box"): der Schütze steht beim
+  // Beschießen still und läuft nur zwischen den Positionen. Eigener,
+  // schnellerer Testdrill mit nur 2 Zielen statt der 4 von std-box-to-box.
+  const walkDrill = {
+    title: "Walk-Test", category: "Test", procedure: "x",
+    layout: {
+      viewW: 400, viewH: 500,
+      targets: [{ type: "paper", x: 90, y: 110, label: "T1" }, { type: "paper", x: 310, y: 110, label: "T2" }],
+      shooterPositions: [{ x: 90, y: 410, label: "Start", facing: 0 }, { x: 310, y: 410, label: "Position 2", facing: 0 }],
+      path: [[90, 410], [310, 410]],
+      plan: [{ type: "target", index: 0 }, { type: "target", index: 1 }]
+    }
+  };
+  E("openDetail")(walkDrill);
+  $("#plan-play-btn").click();
+  const walkShooter = $("#plan-play-shooter");
+  const walkStartPoints = walkShooter.getAttribute("points");
+
+  await sleep(600);
+  ok($("#plan-play-shooter").getAttribute("points") === walkStartPoints, "steht beim Beschießen von T1 (Position „Start“ ist am nächsten) still");
+
+  await sleep(700);
+  ok($("#plan-play-shooter").getAttribute("points") !== walkStartPoints, "läuft nach T1 zu „Position 2“, weil T2 dort näher ist");
+
+  await sleep(1300);
+  ok($$(".plan-play-bullet").length >= 1, "nach Ankunft an „Position 2“ wird erst geschossen (Patrone für T2 unterwegs)");
+
+  E("stopPlanWalkthrough")();
   E("closeDetail")();
 
   const tri = E("shooterTrianglePoints")(100, 100, 0).split(" ").map((p) => p.split(",").map(Number));

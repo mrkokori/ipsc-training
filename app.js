@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17.7";
+const APP_VERSION = "2026.09.17.8";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -706,6 +706,7 @@ function planListHtml(layout, { compact = false } = {}) {
 // Durchgehen der Reihenfolge vor dem Stand.
 const PLAN_PLAYBACK_TARGET_MS = 1100;
 const PLAN_PLAYBACK_RELOAD_MS = 2000;
+const PLAN_PLAYBACK_WALK_MS = 1200;
 const planPlayback = { token: 0, timeouts: [], rafId: null };
 
 // Punkt auf dem gezeichneten Bewegungspfad (layout.path) bei einem Anteil 0..1
@@ -828,6 +829,30 @@ function playReloadEffect(svg, origin) {
   return g;
 }
 
+// Setzt das Schützen-Symbol direkt auf eine Position (keine Animation), z.B.
+// zu Beginn oder solange an einer Position geschossen wird.
+function placeShooterMarker(marker, pos) {
+  marker.setAttribute("points", shooterTrianglePoints(pos.x, pos.y, pos.facing || 0));
+}
+
+// Lässt das Schützen-Symbol den kompletten layout.path entlanglaufen und ruft
+// danach onDone() auf - für den Wechsel zwischen zwei Schützenpositionen bei
+// mehreren layout.shooterPositions (z.B. "Box zu Box"). Bricht sauber ab,
+// wenn zwischenzeitlich gestoppt wurde (token wechselt), ohne onDone zu rufen.
+function animateShooterWalk(marker, path, token, onDone) {
+  const startTime = performance.now();
+  const tick = (now) => {
+    if (token !== planPlayback.token) return;
+    const fraction = (now - startTime) / PLAN_PLAYBACK_WALK_MS;
+    const p = pointAlongPath(path, fraction);
+    const dir = directionAlongPath(path, fraction);
+    marker.setAttribute("points", shooterTrianglePoints(p.x, p.y, dir ?? 0));
+    if (fraction < 1) planPlayback.rafId = requestAnimationFrame(tick);
+    else onDone();
+  };
+  planPlayback.rafId = requestAnimationFrame(tick);
+}
+
 function playPlanWalkthrough(layout) {
   const steps = planSteps(layout);
   // Gezielt in detailContent suchen: der Stage-Editor-Vorschau (#builder-preview)
@@ -839,25 +864,39 @@ function playPlanWalkthrough(layout) {
   const btn = document.getElementById("plan-play-btn");
   if (btn) { btn.textContent = "⏸ Stoppen"; btn.dataset.playing = "1"; }
 
-  // Läuft der Schütze laut layout.path zwischen Positionen, wird das parallel zu
-  // den Ziel-Schritten als eigener, entlang des Pfads wandernder Marker animiert –
-  // im Gesamttempo der Wiedergabe, nicht pro Schritt (der Pfad ist nicht auf
-  // einzelne Plan-Schritte gemappt, nur auf Start und Ende der Bewegung).
   const path = layout.path;
+  const positions = layout.shooterPositions || [];
+  // Bei mehreren Schützenpositionen (z.B. "Box zu Box") steht der Schütze
+  // beim Beschießen still und läuft nur zwischen den Positionen - erkannt
+  // daran, dass sich die für ein Ziel nächstgelegene Position ändert. Mit nur
+  // einer Position (z.B. "Schießen in Bewegung") gibt es keine Haltepunkte,
+  // dort läuft der Marker wie bisher gleichmäßig über die Gesamtdauer.
+  const hasStops = path && path.length > 1 && positions.length > 1;
+  let shooterMarker = null;
+  let currentShooterPos = null;
+
   if (path && path.length > 1) {
-    const totalDuration = steps.reduce((sum, s) => sum + (s.type === "reload" ? PLAN_PLAYBACK_RELOAD_MS : PLAN_PLAYBACK_TARGET_MS), 0);
     // Dasselbe Dreieck-Symbol wie die statischen Schützenpositionen, nicht nur
     // ein abstrakter Punkt - sieht so aus, als würde der Schütze selbst laufen.
-    const shooterMarker = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    shooterMarker = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
     shooterMarker.setAttribute("id", "plan-play-shooter");
     shooterMarker.setAttribute("class", "plan-play-shooter");
     // Farbe als Attribut statt nur per CSS-Klasse, siehe fireBullet().
     shooterMarker.setAttribute("fill", "#e8620c");
-    let facing = (layout.shooterPositions && layout.shooterPositions[0] && layout.shooterPositions[0].facing) || 0;
-    const start = pointAlongPath(path, 0);
-    shooterMarker.setAttribute("points", shooterTrianglePoints(start.x, start.y, facing));
+    if (hasStops) {
+      const firstTarget = steps.find(s => s.type === "target");
+      currentShooterPos = firstTarget ? nearestShooterOrigin(layout, firstTarget.target) : positions[0];
+      placeShooterMarker(shooterMarker, currentShooterPos);
+    } else {
+      const start = pointAlongPath(path, 0);
+      placeShooterMarker(shooterMarker, { x: start.x, y: start.y, facing: positions[0] ? positions[0].facing : 0 });
+    }
     svg.appendChild(shooterMarker);
+  }
 
+  if (path && path.length > 1 && !hasStops) {
+    const totalDuration = steps.reduce((sum, s) => sum + (s.type === "reload" ? PLAN_PLAYBACK_RELOAD_MS : PLAN_PLAYBACK_TARGET_MS), 0);
+    let facing = positions[0] ? positions[0].facing || 0 : 0;
     const startTime = performance.now();
     const tick = (now) => {
       if (token !== planPlayback.token) return;
@@ -882,14 +921,28 @@ function playPlanWalkthrough(layout) {
     const step = steps[i];
     const li = listItems[i];
     if (li) { li.classList.add("plan-active"); li.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
-    if (step.type === "target") {
-      fireBulletsForStep(svg, layout, step, token);
-      lastTargetPoint = step.target;
-    } else {
-      reloadGroup = playReloadEffect(svg, nearestShooterOrigin(layout, lastTargetPoint));
+
+    const runStep = () => {
+      if (token !== planPlayback.token) return;
+      if (step.type === "target") {
+        fireBulletsForStep(svg, layout, step, token);
+        lastTargetPoint = step.target;
+      } else {
+        reloadGroup = playReloadEffect(svg, nearestShooterOrigin(layout, lastTargetPoint));
+      }
+      const delay = step.type === "reload" ? PLAN_PLAYBACK_RELOAD_MS : PLAN_PLAYBACK_TARGET_MS;
+      planPlayback.timeouts.push(setTimeout(() => advance(i + 1), delay));
+    };
+
+    if (hasStops && step.type === "target") {
+      const pos = nearestShooterOrigin(layout, step.target);
+      if (pos !== currentShooterPos) {
+        animateShooterWalk(shooterMarker, path, token, () => { currentShooterPos = pos; runStep(); });
+        return;
+      }
+      currentShooterPos = pos;
     }
-    const delay = step.type === "reload" ? PLAN_PLAYBACK_RELOAD_MS : PLAN_PLAYBACK_TARGET_MS;
-    planPlayback.timeouts.push(setTimeout(() => advance(i + 1), delay));
+    runStep();
   };
   advance(0);
 }
