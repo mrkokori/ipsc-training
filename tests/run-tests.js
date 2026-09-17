@@ -148,7 +148,7 @@ async function testSettingsStatsTimer() {
   section("Einstellungen, Auswertung, Par-Timer");
   const log = [];
   for (let i = 0; i < 10; i++) log.push({ date: `2026-09-${String(i + 1).padStart(2, "0")}T10:00:00.000Z`, alpha: 4 + (i % 3), charlie: 2 - (i % 3), delta: 0, mike: 0, noshoot: 0, time: 2 + i * 0.05, major: false });
-  const { w, E, $ } = boot({ storage: { ipscScoreLogs: { "std-bill-drill": log } } });
+  const { w, E, $, $$ } = boot({ storage: { ipscScoreLogs: { "std-bill-drill": log } } });
 
   $("#settings-btn").click();
   ok(!$("#settings-overlay").classList.contains("hidden") && $("#settings-version").textContent.includes(E("APP_VERSION")), "Einstellungen öffnen mit Versionsanzeige");
@@ -168,6 +168,16 @@ async function testSettingsStatsTimer() {
   ok(/zu den 5 davor/.test($(".stat-trend").textContent), "Auswertung: Trend gegenüber den 5 Versuchen davor");
   ok(values["Innerhalb Par (2.5 s)"] === "10 von 10", "Auswertung: Par-Quote");
   ok($(".score-chart-wrap svg polyline") && $(".legend-best"), "Diagramm mit Durchschnittslinie und Bestwert");
+
+  ok($("#score-alpha").readOnly && $$(".score-stepper-btn").length > 0, "Schnelleingabe: A/C/D/Miss als Plus/Minus-Zähler statt Zahlenfeld");
+  $(`.score-stepper-minus[data-target="score-mike"]`).click();
+  ok($("#score-mike").value === "0", "Minus-Zähler geht nicht unter 0");
+  for (let i = 0; i < 10; i++) $(`.score-stepper-plus[data-target="score-alpha"]`).click();
+  for (let i = 0; i < 3; i++) $(`.score-stepper-plus[data-target="score-mike"]`).click();
+  ok($("#score-alpha").value === "10" && $("#score-mike").value === "3" && /Punkte/.test($("#score-live-result").textContent), "Plus-Zähler zählt hoch und aktualisiert die Live-Anzeige");
+  $(`.score-stepper-minus[data-target="score-mike"]`).click();
+  ok($("#score-mike").value === "2", "Minus-Zähler zählt wieder runter");
+  $("#score-alpha").value = "0"; $("#score-mike").value = "0";
 
   $("#score-alpha").value = "6"; $("#score-charlie").value = "0"; $("#score-time").value = "1.5";
   $("#score-add-btn").click();

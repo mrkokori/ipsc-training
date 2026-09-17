@@ -500,6 +500,53 @@ body.modal-open {
   min-width: 170px;
 }
 
+/* Schnelleingabe: große Plus/Minus-Zähler statt Zahlenfeldern, damit A/C/D/Miss
+   auch mit Handschuhen und bei Sonnenlicht auf dem Display bedienbar bleiben. */
+.score-stepper-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.score-stepper-btn {
+  width: 46px;
+  height: 46px;
+  flex: none;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.score-stepper-btn:active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.score-stepper-row input {
+  width: 46px;
+  height: 46px;
+  text-align: center;
+  font-size: 1.3rem;
+  font-weight: 700;
+  padding: 0;
+  -moz-appearance: textfield;
+  caret-color: transparent;
+}
+
+.score-stepper-row input::-webkit-outer-spin-button,
+.score-stepper-row input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .score-table-wrap {
   overflow-x: auto;
 }

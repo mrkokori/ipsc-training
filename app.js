@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17";
+const APP_VERSION = "2026.09.17.1";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -2641,6 +2641,49 @@ function scoreChartSvg(log) {
   <div class="chart-legend"><span class="legend-hf">Hit-Factor</span>${values.length >= 3 ? `<span class="legend-avg">Ø der letzten 5</span>` : ""}<span class="legend-best">Bestwert</span></div>`;
 }
 
+function scoreStepperHtml(id, label) {
+  return `
+    <div class="score-field score-stepper">
+      <span>${label}</span>
+      <div class="score-stepper-row">
+        <button type="button" class="score-stepper-btn score-stepper-minus" data-target="${id}" data-delta="-1" aria-label="${label} verringern">−</button>
+        <input type="number" id="${id}" step="1" min="0" value="0" readonly inputmode="none">
+        <button type="button" class="score-stepper-btn score-stepper-plus" data-target="${id}" data-delta="1" aria-label="${label} erhöhen">+</button>
+      </div>
+    </div>`;
+}
+
+// Erlaubt schnelles Hochzählen durch Gedrückthalten (Handschuhe, Stand nach dem
+// Schießen) statt einzelner Klicks pro Treffer.
+function initScoreSteppers(container) {
+  let holdTimeout = null;
+  let holdInterval = null;
+  const stopHold = () => {
+    clearTimeout(holdTimeout);
+    clearInterval(holdInterval);
+    holdTimeout = null;
+    holdInterval = null;
+  };
+  const step = (btn) => {
+    const input = document.getElementById(btn.dataset.target);
+    if (!input) return;
+    const delta = parseInt(btn.dataset.delta, 10);
+    const next = Math.max(0, (parseInt(input.value, 10) || 0) + delta);
+    input.value = next;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  container.querySelectorAll(".score-stepper-btn").forEach(btn => {
+    btn.addEventListener("click", () => step(btn));
+    btn.addEventListener("pointerdown", () => {
+      stopHold();
+      holdTimeout = setTimeout(() => {
+        holdInterval = setInterval(() => step(btn), 90);
+      }, 450);
+    });
+    ["pointerup", "pointerleave", "pointercancel"].forEach(evt => btn.addEventListener(evt, stopHold));
+  });
+}
+
 function refreshScoreSection(drill, notice = "") {
   const container = document.getElementById("score-section");
   if (!container) return;
@@ -2716,10 +2759,10 @@ function refreshScoreSection(drill, notice = "") {
     ${sparkline}
     ${table}
     <div class="score-form">
-      <label class="score-field"><span>Alpha</span><input type="number" id="score-alpha" step="1" min="0" value="0"></label>
-      <label class="score-field"><span>Charlie</span><input type="number" id="score-charlie" step="1" min="0" value="0"></label>
-      <label class="score-field"><span>Delta</span><input type="number" id="score-delta" step="1" min="0" value="0"></label>
-      <label class="score-field"><span>Mike</span><input type="number" id="score-mike" step="1" min="0" value="0"></label>
+      ${scoreStepperHtml("score-alpha", "Alpha")}
+      ${scoreStepperHtml("score-charlie", "Charlie")}
+      ${scoreStepperHtml("score-delta", "Delta")}
+      ${scoreStepperHtml("score-mike", "Mike")}
       ${hasNoShoot ? `<label class="score-field"><span>No-Shoot</span><input type="number" id="score-noshoot" step="1" min="0" value="0"></label>` : ""}
       <label class="score-field"><span>Procedural</span><input type="number" id="score-procedural" step="1" min="0" value="0"></label>
       <label class="score-field"><span>Zeit (Sekunden)</span><input type="number" id="score-time" step="0.01" min="0.01"></label>
@@ -2763,6 +2806,7 @@ function refreshScoreSection(drill, notice = "") {
   [alphaInput, charlieInput, deltaInput, mikeInput, proceduralInput, timeInput].forEach(el => el.addEventListener("input", updateLive));
   if (noshootInput) noshootInput.addEventListener("input", updateLive);
   majorSelect.addEventListener("change", updateLive);
+  initScoreSteppers(container);
 
   document.getElementById("score-add-btn").addEventListener("click", () => {
     const a = parseInt(alphaInput.value, 10) || 0;
