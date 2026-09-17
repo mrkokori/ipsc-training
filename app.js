@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17.3";
+const APP_VERSION = "2026.09.17.4";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -738,13 +738,72 @@ function stopPlanWalkthrough() {
   planPlayback.timeouts.forEach(clearTimeout);
   planPlayback.timeouts = [];
   if (planPlayback.rafId !== null) { cancelAnimationFrame(planPlayback.rafId); planPlayback.rafId = null; }
-  const marker = document.getElementById("plan-play-marker");
-  if (marker) marker.remove();
   const shooterMarker = document.getElementById("plan-play-shooter");
   if (shooterMarker) shooterMarker.remove();
+  detailContent.querySelectorAll(".plan-play-bullet, .plan-play-reload").forEach(el => el.remove());
   detailContent.querySelectorAll(".plan-steps li.plan-active").forEach(li => li.classList.remove("plan-active"));
   const btn = document.getElementById("plan-play-btn");
   if (btn) { btn.textContent = "▶ Ablauf abspielen"; btn.dataset.playing = "0"; }
+}
+
+const BULLET_FIRST_DELAY_MS = 90;
+const BULLET_GAP_MS = 140;
+const BULLET_FLIGHT_MS = 180;
+
+// Ausgangspunkt für eine fliegende Patrone bzw. den Magazinwechsel: die dem Ziel
+// (bzw. dem zuletzt beschossenen Ziel) nächstgelegene Schützenposition, oder –
+// falls keine im Layout gesetzt ist – ein Punkt unterhalb des Ziels.
+function nearestShooterOrigin(layout, point) {
+  const positions = layout.shooterPositions || [];
+  if (!positions.length) return { x: point.x, y: Math.min((layout.viewH || 500) - 20, point.y + 150) };
+  return positions.reduce((best, p) =>
+    Math.hypot(p.x - point.x, p.y - point.y) < Math.hypot(best.x - point.x, best.y - point.y) ? p : best);
+}
+
+function fireBullet(svg, token, origin, target) {
+  const bullet = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+  bullet.setAttribute("class", "plan-play-bullet");
+  bullet.setAttribute("r", "3");
+  bullet.setAttribute("cx", origin.x);
+  bullet.setAttribute("cy", origin.y);
+  svg.appendChild(bullet);
+  const startTime = performance.now();
+  const tick = (now) => {
+    if (token !== planPlayback.token) { bullet.remove(); return; }
+    const t = Math.min(1, (now - startTime) / BULLET_FLIGHT_MS);
+    const p = pointAlongPath([[origin.x, origin.y], [target.x, target.y]], t);
+    bullet.setAttribute("cx", p.x);
+    bullet.setAttribute("cy", p.y);
+    if (t < 1) requestAnimationFrame(tick); else bullet.remove();
+  };
+  requestAnimationFrame(tick);
+}
+
+// Feuert die Schuss-Patronen eines Ziel-Schritts kurz nacheinander vom Schützen
+// zum Ziel ab, statt nur einen Marker aufs Ziel zu setzen.
+function fireBulletsForStep(svg, layout, step, token) {
+  const origin = nearestShooterOrigin(layout, step.target);
+  for (let i = 0; i < step.rounds; i++) {
+    planPlayback.timeouts.push(setTimeout(() => {
+      if (token === planPlayback.token) fireBullet(svg, token, origin, step.target);
+    }, BULLET_FIRST_DELAY_MS + i * BULLET_GAP_MS));
+  }
+}
+
+// Sichtbarer Magazinwechsel: ein leeres Magazin fällt an der Schützenposition
+// heraus, ein neues rutscht nach – siehe .plan-play-mag-out/-in in style.css.
+function playReloadEffect(svg, origin) {
+  // Etwas neben dem Schützen-Symbol platziert, sonst überdeckt das Dreieck-Icon
+  // das schmale Magazin-Rechteck an derselben Stelle.
+  const x = origin.x + 20;
+  const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  g.setAttribute("class", "plan-play-reload");
+  g.innerHTML = `
+    <rect class="plan-play-mag plan-play-mag-out" x="${x - 4}" y="${origin.y - 10}" width="8" height="20" rx="2"/>
+    <rect class="plan-play-mag plan-play-mag-in" x="${x - 4}" y="${origin.y - 10}" width="8" height="20" rx="2"/>
+  `;
+  svg.appendChild(g);
+  return g;
 }
 
 function playPlanWalkthrough(layout) {
@@ -757,12 +816,6 @@ function playPlanWalkthrough(layout) {
   const token = ++planPlayback.token;
   const btn = document.getElementById("plan-play-btn");
   if (btn) { btn.textContent = "⏸ Stoppen"; btn.dataset.playing = "1"; }
-
-  const marker = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-  marker.setAttribute("id", "plan-play-marker");
-  marker.setAttribute("class", "plan-play-marker");
-  marker.setAttribute("r", "16");
-  svg.appendChild(marker);
 
   // Läuft der Schütze laut layout.path zwischen Positionen, wird das parallel zu
   // den Ziel-Schritten als eigener, entlang des Pfads wandernder Marker animiert –
@@ -793,20 +846,22 @@ function playPlanWalkthrough(layout) {
   }
 
   const listItems = [...detailContent.querySelectorAll(".plan-steps > li")];
+  let lastTargetPoint = (layout.shooterPositions && layout.shooterPositions[0]) || { x: layout.viewW / 2, y: layout.viewH - 60 };
+  let reloadGroup = null;
 
   const advance = (i) => {
     if (token !== planPlayback.token) return;
     listItems.forEach(li => li.classList.remove("plan-active"));
+    if (reloadGroup) { reloadGroup.remove(); reloadGroup = null; }
     if (i >= steps.length) { stopPlanWalkthrough(); return; }
     const step = steps[i];
     const li = listItems[i];
     if (li) { li.classList.add("plan-active"); li.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
     if (step.type === "target") {
-      marker.setAttribute("cx", step.target.x);
-      marker.setAttribute("cy", step.target.y);
-      marker.classList.remove("plan-play-marker-reload");
+      fireBulletsForStep(svg, layout, step, token);
+      lastTargetPoint = step.target;
     } else {
-      marker.classList.add("plan-play-marker-reload");
+      reloadGroup = playReloadEffect(svg, nearestShooterOrigin(layout, lastTargetPoint));
     }
     const delay = step.type === "reload" ? PLAN_PLAYBACK_RELOAD_MS : PLAN_PLAYBACK_TARGET_MS;
     planPlayback.timeouts.push(setTimeout(() => advance(i + 1), delay));

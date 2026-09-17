@@ -360,31 +360,36 @@ async function testShotPlan() {
 
 async function testPlanWalkthrough() {
   section("Ablauf-Animation");
-  let { w, E, $ } = boot();
+  let { w, E, $, $$ } = boot();
   const presi = E("DRILLS").find((d) => d.id === "std-el-presidente");
   E("openDetail")(presi);
   ok($("#plan-play-btn") && $("#plan-play-btn").textContent.includes("Ablauf abspielen"), "Abspiel-Button erscheint bei einem Training mit Schussplan");
-  ok(!$("#plan-play-marker"), "keine Markierung, bevor abgespielt wird");
+  ok(!$(".plan-play-bullet"), "keine Patrone, bevor abgespielt wird");
 
   $("#plan-play-btn").click();
   ok($("#plan-play-btn").textContent.includes("Stoppen"), "Button wechselt beim Abspielen zu „Stoppen“");
   const steps = E("planSteps")(presi.layout);
-  const marker = $("#plan-play-marker");
-  ok(marker && Number(marker.getAttribute("cx")) === steps[0].target.x && Number(marker.getAttribute("cy")) === steps[0].target.y, "Markierung steht zu Beginn auf dem ersten Ziel");
   ok($(".plan-steps > li").classList.contains("plan-active"), "erste Zeile im Schussplan ist markiert");
+  ok(!$(".plan-play-bullet"), "erste Patrone fliegt erst nach kurzer Verzögerung los");
+  ok(steps[0].rounds === 2, "El Presidente T1: 2 Schuss geplant");
 
-  await sleep(950);
+  await sleep(150);
+  ok($$(".plan-play-bullet").length >= 1, "Patrone fliegt zum ersten Ziel");
+
+  await sleep(800);
   const liList = [...w.document.querySelectorAll(".plan-steps > li")];
   ok(!liList[0].classList.contains("plan-active") && liList[1].classList.contains("plan-active"), "Animation springt nach dem Takt zur nächsten Zeile");
-  ok(Number($("#plan-play-marker").getAttribute("cx")) === steps[1].target.x, "Markierung folgt dem zweiten Schritt");
+  ok(!$$(".plan-play-bullet").length, "Patronen des ersten Schritts sind schon wieder verschwunden");
 
   E("stopPlanWalkthrough")();
-  ok(!$("#plan-play-marker") && $("#plan-play-btn").textContent.includes("Ablauf abspielen") && !liList.some((li) => li.classList.contains("plan-active")), "Stoppen räumt Markierung, Button und Markierungen auf");
+  ok(!$(".plan-play-bullet") && $("#plan-play-btn").textContent.includes("Ablauf abspielen") && !liList.some((li) => li.classList.contains("plan-active")), "Stoppen räumt Patronen, Button und Markierungen auf");
 
   // Schließen der Detailansicht während des Abspielens räumt ebenfalls auf
   $("#plan-play-btn").click();
+  await sleep(150);
+  ok($$(".plan-play-bullet").length >= 1, "Patrone fliegt, bevor die Detailansicht geschlossen wird");
   E("closeDetail")();
-  ok(!w.document.getElementById("plan-play-marker"), "Schließen der Detailansicht beendet eine laufende Animation");
+  ok(!w.document.querySelector(".plan-play-bullet"), "Schließen der Detailansicht beendet eine laufende Animation");
 
   // Trainings ohne Schussplan zeigen keinen Button
   const noPlan = { title: "Ohne Plan", category: "Test", procedure: "x", layout: { targets: [{ type: "paper", x: 10, y: 10 }] } };
@@ -396,7 +401,7 @@ async function testPlanWalkthrough() {
   const withImage = { ...presi, sketchDataUrl: "data:image/png;base64,AAAA" };
   E("openDetail")(withImage);
   $("#plan-play-btn").click();
-  ok(!$("#plan-play-marker"), "ohne SVG (Bild-Skizze) wird nichts animiert");
+  ok(!$(".plan-play-bullet"), "ohne SVG (Bild-Skizze) wird nichts animiert");
   E("closeDetail")();
 
   ok(!presi.layout.path.length, "El Presidente hat keinen Bewegungspfad");
@@ -421,6 +426,25 @@ async function testPlanWalkthrough() {
   E("stopPlanWalkthrough")();
   ok(!$("#plan-play-shooter"), "Stoppen entfernt auch den Bewegungs-Marker");
   E("closeDetail")();
+
+  // Sichtbarer Magazinwechsel bei Reload-Schritten
+  const reloadDrill = {
+    title: "Reload-Test", category: "Test", procedure: "x",
+    layout: { viewW: 400, viewH: 500, targets: [{ type: "paper", x: 100, y: 100, label: "T1" }],
+      shooterPositions: [{ x: 100, y: 400, label: "Start" }], plan: [{ type: "target", index: 0 }, { type: "reload" }] }
+  };
+  E("openDetail")(reloadDrill);
+  $("#plan-play-btn").click();
+  await sleep(950);
+  ok($(".plan-play-mag-out") && $(".plan-play-mag-in"), "Magazinwechsel: altes Magazin fällt heraus, neues rutscht nach");
+  E("stopPlanWalkthrough")();
+  ok(!$(".plan-play-mag-out"), "Stoppen entfernt auch die Magazin-Animation");
+  E("closeDetail")();
+
+  const origin1 = E("nearestShooterOrigin")({ shooterPositions: [{ x: 10, y: 10 }, { x: 500, y: 500 }] }, { x: 20, y: 20 });
+  ok(origin1.x === 10 && origin1.y === 10, "nearestShooterOrigin: wählt die nächste Schützenposition");
+  const origin2 = E("nearestShooterOrigin")({ shooterPositions: [], viewH: 500 }, { x: 100, y: 100 });
+  ok(origin2.x === 100 && origin2.y === 250, "nearestShooterOrigin: ohne Schützenposition ein Punkt unterhalb des Ziels");
 
   const along = E("pointAlongPath");
   ok(JSON.stringify(along([[0, 0], [10, 0], [10, 10]], 0)) === JSON.stringify({ x: 0, y: 0 }), "pointAlongPath: Anfang bei Anteil 0");
