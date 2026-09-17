@@ -694,6 +694,46 @@ async function testStats() {
   ok(!/in Folge/.test($("#stats-content").textContent), "abgebrochene Serie erscheint nicht in der Statistik");
 }
 
+async function testGoals() {
+  section("Ziel-Hit-Factor je Übung");
+  let { w, E, $ } = boot();
+  const presi = E("DRILLS").find((d) => d.id === "std-el-presidente");
+  E("openDetail")(presi);
+  ok($("#score-goal-input").value === "" && $("#score-goal-save").textContent === "Setzen" && !$("#score-goal-clear"), "noch kein Ziel gesetzt: leeres Feld, „Setzen“, kein Entfernen-Button");
+
+  $("#score-goal-input").value = "8"; $("#score-goal-save").click();
+  ok(E("goals")["std-el-presidente"] === 8 && $("#score-goal-input").value === "8.00" && $("#score-goal-save").textContent === "Ändern" && $("#score-goal-clear"), "Ziel gesetzt und gespeichert");
+  ok(JSON.parse(w.localStorage.getItem("ipscGoals"))["std-el-presidente"] === 8, "Ziel landet im lokalen Speicher");
+  ok(!$(".score-goal ~ .loss-bars"), "ohne Ergebnisse noch kein Fortschrittsbalken");
+
+  const fill = { alpha: "8", charlie: "2", delta: "0", mike: "0", procedural: "0", time: "5" };
+  for (const [k, v] of Object.entries(fill)) { const el = $(`#score-${k}`); if (el) el.value = v; }
+  $("#score-add-btn").click();
+  ok(Math.abs(E("goals")["std-el-presidente"] - 8) < 1e-9, "Ziel bleibt nach dem Eintragen eines Ergebnisses erhalten");
+  ok($(".loss-bar span").dataset.barWidth.endsWith("%") && $(".loss-bar span").style.width.endsWith("%"), "Fortschrittsbalken nutzt data-bar-width (CSP-kompatibel), Breite trotzdem per JS gesetzt");
+  ok(/9\.20 \/ 8\.00/.test($(".loss-value").textContent) && /✓/.test($(".loss-label").textContent), "Bestwert über dem Ziel wird als erreicht markiert (Minor: 8A+2C = 46 Punkte / 5 s = HF 9.2)");
+
+  $("#score-goal-clear").click();
+  ok(!("std-el-presidente" in E("goals")) && $("#score-goal-input").value === "" && !$("#score-goal-clear"), "Ziel entfernen löscht es wieder");
+  E("closeDetail")();
+
+  // In der Statistik erscheinen alle gesetzten Ziele mit Fortschritt
+  ({ w, E, $ } = boot({ storage: {
+    ipscGoals: { "std-el-presidente": 10, "std-bill-drill": 9 },
+    ipscScoreLogs: {
+      "std-el-presidente": [{ date: "2026-06-01T10:00:00.000Z", alpha: 8, charlie: 2, delta: 0, mike: 0, noshoot: 0, procedural: 0, time: 5, major: false, points: 46, hitFactor: 9.2 }]
+    }
+  } }));
+  $("#stats-btn").click();
+  ok(/Zielwerte/.test($("#stats-content").textContent) && /El Presidente/.test($("#stats-content").textContent) && /Bill Drill/.test($("#stats-content").textContent), "Statistik listet alle Übungen mit Zielwert");
+  ok(/0\.00 \/ 9\.00/.test($("#stats-content").textContent), "Übung ohne eigene Ergebnisse zeigt Bestwert 0");
+  E("closeStats")();
+
+  // Ungültige/gelöschte Eingaben werden robust verworfen
+  ({ w, E, $ } = boot());
+  ok(JSON.stringify(E("sanitizeGoals")({ "std-bill-drill": "abc", "std-plates": -1, "__proto__": 5, "std-el-presidente": 7.5 })) === JSON.stringify({ "std-plates": 0.0001, "std-el-presidente": 7.5 }), "sanitizeGoals verwirft Unsinn, __proto__ und begrenzt den Wertebereich");
+}
+
 async function testMicrophone() {
   section("Schusserkennung per Mikrofon");
   const { w: w0, E: E0 } = boot();
@@ -1118,7 +1158,7 @@ function testLicenseFiles() {
 }
 
 (async () => {
-  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testPlanWalkthrough, testStageEditor, testMatches, testPlans, testTrainingSuggestion, testStats, testMicrophone, testVoiceStart, testInstallAndExportReminder, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
+  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testPlanWalkthrough, testStageEditor, testMatches, testPlans, testTrainingSuggestion, testStats, testGoals, testMicrophone, testVoiceStart, testInstallAndExportReminder, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
     try { await suite(); } catch (e) { failed++; console.log("  ✗ Testblock abgebrochen: " + (e && e.stack || e)); }
   }
   console.log(`\n${passed} bestanden, ${failed} fehlgeschlagen`);

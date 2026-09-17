@@ -9,9 +9,10 @@ let systemThemeQuery = null; // für „Design wie am Gerät“
 let matches = [];
 let customPlans = [];
 let planProgress = {};
+let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.15";
+const APP_VERSION = "2026.09.16";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -19,6 +20,7 @@ const DELETED_BUILTINS_KEY = "ipscDeletedBuiltins";
 const SCORE_LOG_KEY = "ipscScoreLogs";
 const STORAGE_WARNING_KEY = "ipscStorageWarningDismissedV2";
 const FAVORITES_KEY = "ipscFavorites";
+const GOALS_KEY = "ipscGoals";
 const SETTINGS_KEY = "ipscSettings";
 
 // Einstellungen
@@ -245,6 +247,7 @@ async function init() {
   matches = sanitizeMatches(loadJSON(MATCHES_KEY, []));
   customPlans = sanitizePlans(loadJSON(PLANS_KEY, []));
   planProgress = sanitizePlanProgress(loadJSON(PLAN_PROGRESS_KEY, {}));
+  goals = sanitizeGoals(loadJSON(GOALS_KEY, {}));
   applyAppearance();
   requestPersistentStorage();
   mergeDrills();
@@ -1022,6 +1025,16 @@ function categoryDistribution() {
   return [...counts.entries()].sort((a, b) => b[1] - a[1]);
 }
 
+function goalsOverview() {
+  return Object.entries(goals).map(([drillId, goal]) => {
+    const drill = DRILLS.find(d => d.id === drillId);
+    if (!drill) return null;
+    const log = getScoreLog(drillId);
+    const best = log.length ? Math.max(...log.map(e => e.hitFactor)) : 0;
+    return { title: drill.title, goal, best };
+  }).filter(Boolean).sort((a, b) => (b.best / b.goal) - (a.best / a.goal));
+}
+
 function barListHtml(rows) {
   const max = Math.max(1, ...rows.map(r => r.value));
   return `<div class="loss-bars">${rows.map(r => `
@@ -1039,6 +1052,7 @@ function renderStats() {
   const months = monthlySessionCounts();
   const top = topPracticedDrills();
   const cats = categoryDistribution();
+  const goalsList = goalsOverview();
 
   box.innerHTML = `
     <h2>Statistik</h2>
@@ -1066,6 +1080,10 @@ function renderStats() {
     ${cats.length ? `
     <div class="section-title">Kategorien im Training</div>
     ${barListHtml(cats.map(([cat, count]) => ({ label: cat, value: count })))}` : ""}
+
+    ${goalsList.length ? `
+    <div class="section-title">Zielwerte</div>
+    <div class="loss-bars">${goalsList.map(g => goalProgressHtml(g.title, g.best, g.goal)).join("")}</div>` : ""}
 
     ${!entries.length && !sessions.length ? `<p class="settings-note">Noch keine Trainingsdaten erfasst – trag Ergebnisse bei einer Übung ein oder leg im Tagebuch eine Einheit an, dann erscheinen hier Auswertungen.</p>` : ""}
   `;
@@ -1365,6 +1383,44 @@ function sanitizePlanProgress(raw) {
 
 function saveCustomPlans() { saveJSON(PLANS_KEY, customPlans); }
 function savePlanProgress() { saveJSON(PLAN_PROGRESS_KEY, planProgress); }
+
+// Ziel-Hit-Factor je Übung (result[id] = … -> cleanId() schützt auch hier vor __proto__ etc.)
+function sanitizeGoals(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [drillId, value] of Object.entries(raw)) {
+    if (!cleanId(drillId)) continue;
+    const n = cleanNum(value, null, 0.0001, 1000);
+    if (n !== null) out[drillId] = n;
+  }
+  return out;
+}
+
+function saveGoals() { saveJSON(GOALS_KEY, goals); }
+
+function setGoal(drillId, value) {
+  const n = cleanNum(value, null, 0.0001, 1000);
+  if (n === null) { delete goals[drillId]; } else { goals[drillId] = n; }
+  saveGoals();
+}
+
+function clearGoal(drillId) {
+  delete goals[drillId];
+  saveGoals();
+}
+
+// Fortschrittsbalken "aktueller Bestwert -> Ziel", genutzt in der Übungsansicht und
+// der Statistik. Nutzt data-bar-width statt style="…" (siehe applyBarWidths).
+function goalProgressHtml(label, current, goal) {
+  const pct = goal > 0 ? Math.min(100, (current / goal) * 100) : 0;
+  const reached = current >= goal;
+  return `
+    <div class="loss-row">
+      <span class="loss-label">${escapeHtml(label)}${reached ? " ✓" : ""}</span>
+      <span class="loss-bar"><span data-bar-width="${pct.toFixed(1)}%"></span></span>
+      <span class="loss-value">${current.toFixed(2)} / ${goal.toFixed(2)}</span>
+    </div>`;
+}
 function allPlans() { return [...BUILTIN_PLANS, ...customPlans]; }
 
 function planDoneCount(plan) {
@@ -2616,6 +2672,15 @@ function refreshScoreSection(drill, notice = "") {
       ${par ? `<div class="stat-box"><div class="label">Innerhalb Par (${escapeHtml(String(par))} s)</div><div class="value">${stats.parHits} von ${stats.count}</div></div>` : ""}
     </div>` : "";
 
+  const goal = goals[drill.id];
+  const goalHtml = `
+    <div class="score-goal">
+      <label class="score-field"><span>Ziel-Hit-Factor</span><input type="number" id="score-goal-input" step="0.01" min="0" value="${goal ? goal.toFixed(2) : ""}" placeholder="z.B. 8.0"></label>
+      <button type="button" class="tool-btn" id="score-goal-save">${goal ? "Ändern" : "Setzen"}</button>
+      ${goal ? `<button type="button" class="tool-btn" id="score-goal-clear">Entfernen</button>` : ""}
+    </div>
+    ${goal && log.length ? `<div class="loss-bars">${goalProgressHtml("Bestwert", stats.best, goal)}</div>` : ""}`;
+
   const sparkline = log.length >= 2
     ? `<div class="score-chart-wrap">${scoreChartSvg(log)}</div>`
     : "";
@@ -2655,6 +2720,7 @@ function refreshScoreSection(drill, notice = "") {
 
   container.innerHTML = `
     ${statsHtml}
+    ${goalHtml}
     ${sparkline}
     ${table}
     <div class="score-form">
@@ -2731,6 +2797,18 @@ function refreshScoreSection(drill, notice = "") {
       refreshScoreSection(drill);
     });
   });
+
+  document.getElementById("score-goal-save").addEventListener("click", () => {
+    const input = document.getElementById("score-goal-input");
+    if (!input.value.trim()) { clearGoal(drill.id); } else { setGoal(drill.id, input.value); }
+    refreshScoreSection(drill);
+  });
+  const goalClearBtn = document.getElementById("score-goal-clear");
+  if (goalClearBtn) goalClearBtn.addEventListener("click", () => {
+    clearGoal(drill.id);
+    refreshScoreSection(drill);
+  });
+  applyBarWidths(container);
 }
 
 // ---------- Par-Timer ----------

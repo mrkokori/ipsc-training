@@ -470,6 +470,14 @@ body.modal-open {
   margin-bottom: 14px;
 }
 
+.score-goal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
 .score-field {
   display: flex;
   flex-direction: column;
