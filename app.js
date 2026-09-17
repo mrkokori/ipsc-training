@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17.4";
+const APP_VERSION = "2026.09.17.5";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -704,8 +704,8 @@ function planListHtml(layout, { compact = false } = {}) {
 // über die Skizze, die passende Zeile in der Liste wird mitmarkiert. Keine echte
 // Zeitsimulation (dafür fehlen reale Split-Zeiten) – ein fester Takt fürs mentale
 // Durchgehen der Reihenfolge vor dem Stand.
-const PLAN_PLAYBACK_TARGET_MS = 900;
-const PLAN_PLAYBACK_RELOAD_MS = 1500;
+const PLAN_PLAYBACK_TARGET_MS = 1100;
+const PLAN_PLAYBACK_RELOAD_MS = 2000;
 const planPlayback = { token: 0, timeouts: [], rafId: null };
 
 // Punkt auf dem gezeichneten Bewegungspfad (layout.path) bei einem Anteil 0..1
@@ -746,9 +746,9 @@ function stopPlanWalkthrough() {
   if (btn) { btn.textContent = "▶ Ablauf abspielen"; btn.dataset.playing = "0"; }
 }
 
-const BULLET_FIRST_DELAY_MS = 90;
-const BULLET_GAP_MS = 140;
-const BULLET_FLIGHT_MS = 180;
+const BULLET_FIRST_DELAY_MS = 150;
+const BULLET_GAP_MS = 420;
+const BULLET_FLIGHT_MS = 380;
 
 // Ausgangspunkt für eine fliegende Patrone bzw. den Magazinwechsel: die dem Ziel
 // (bzw. dem zuletzt beschossenen Ziel) nächstgelegene Schützenposition, oder –
@@ -763,7 +763,7 @@ function nearestShooterOrigin(layout, point) {
 function fireBullet(svg, token, origin, target) {
   const bullet = document.createElementNS("http://www.w3.org/2000/svg", "circle");
   bullet.setAttribute("class", "plan-play-bullet");
-  bullet.setAttribute("r", "3");
+  bullet.setAttribute("r", "6");
   bullet.setAttribute("cx", origin.x);
   bullet.setAttribute("cy", origin.y);
   svg.appendChild(bullet);
@@ -795,12 +795,12 @@ function fireBulletsForStep(svg, layout, step, token) {
 function playReloadEffect(svg, origin) {
   // Etwas neben dem Schützen-Symbol platziert, sonst überdeckt das Dreieck-Icon
   // das schmale Magazin-Rechteck an derselben Stelle.
-  const x = origin.x + 20;
+  const x = origin.x + 24;
   const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
   g.setAttribute("class", "plan-play-reload");
   g.innerHTML = `
-    <rect class="plan-play-mag plan-play-mag-out" x="${x - 4}" y="${origin.y - 10}" width="8" height="20" rx="2"/>
-    <rect class="plan-play-mag plan-play-mag-in" x="${x - 4}" y="${origin.y - 10}" width="8" height="20" rx="2"/>
+    <rect class="plan-play-mag plan-play-mag-out" x="${x - 7}" y="${origin.y - 16}" width="14" height="32" rx="3"/>
+    <rect class="plan-play-mag plan-play-mag-in" x="${x - 7}" y="${origin.y - 16}" width="14" height="32" rx="3"/>
   `;
   svg.appendChild(g);
   return g;

@@ -373,10 +373,10 @@ async function testPlanWalkthrough() {
   ok(!$(".plan-play-bullet"), "erste Patrone fliegt erst nach kurzer Verzögerung los");
   ok(steps[0].rounds === 2, "El Presidente T1: 2 Schuss geplant");
 
-  await sleep(150);
+  await sleep(220);
   ok($$(".plan-play-bullet").length >= 1, "Patrone fliegt zum ersten Ziel");
 
-  await sleep(800);
+  await sleep(1000);
   const liList = [...w.document.querySelectorAll(".plan-steps > li")];
   ok(!liList[0].classList.contains("plan-active") && liList[1].classList.contains("plan-active"), "Animation springt nach dem Takt zur nächsten Zeile");
   ok(!$$(".plan-play-bullet").length, "Patronen des ersten Schritts sind schon wieder verschwunden");
@@ -386,7 +386,7 @@ async function testPlanWalkthrough() {
 
   // Schließen der Detailansicht während des Abspielens räumt ebenfalls auf
   $("#plan-play-btn").click();
-  await sleep(150);
+  await sleep(220);
   ok($$(".plan-play-bullet").length >= 1, "Patrone fliegt, bevor die Detailansicht geschlossen wird");
   E("closeDetail")();
   ok(!w.document.querySelector(".plan-play-bullet"), "Schließen der Detailansicht beendet eine laufende Animation");
@@ -435,7 +435,7 @@ async function testPlanWalkthrough() {
   };
   E("openDetail")(reloadDrill);
   $("#plan-play-btn").click();
-  await sleep(950);
+  await sleep(1200);
   ok($(".plan-play-mag-out") && $(".plan-play-mag-in"), "Magazinwechsel: altes Magazin fällt heraus, neues rutscht nach");
   E("stopPlanWalkthrough")();
   ok(!$(".plan-play-mag-out"), "Stoppen entfernt auch die Magazin-Animation");
