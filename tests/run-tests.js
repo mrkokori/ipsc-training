@@ -494,6 +494,13 @@ async function testStageEditor() {
   const f = E("builderLayout").faults[0];
   ok(Math.round(f.x1 + f.x2) === 800 && f.y1 !== f.y2, "Linie dreht sich um ihre Mitte");
 
+  tool("path");
+  E("handleBuilderTap")({ x: 40, y: 420 }, null);
+  E("handleBuilderTap")({ x: 400, y: 420 }, null);
+  ok(E("builderLayout").path.length === 2 && /polyline/.test($("#builder-svg").innerHTML), "Laufweg: zwei Punkte gesetzt und gezeichnet");
+  $("#path-clear-btn").click();
+  ok(E("builderLayout").path.length === 0 && !/polyline/.test($("#builder-svg").innerHTML) && E("builderLayout").faults.length === 1, "Laufweg löschen entfernt nur den Pfad, nicht den Rest der Stage");
+
   tool("text");
   E("handleBuilderTap")({ x: 200, y: 460 }, null);
   ok(E("builderLayout").texts[0].text === "Text" && w.document.activeElement === $("#se-label"), "Text setzen, Eingabefeld hat den Fokus");

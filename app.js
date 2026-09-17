@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17.2";
+const APP_VERSION = "2026.09.17.3";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -4265,6 +4265,11 @@ function initBuilder() {
   document.getElementById("plan-clear-btn").addEventListener("click", () => {
     builderLayout.plan = [];
     historyStack = historyStack.filter(h => h.type !== "plan");
+    renderBuilderPreview();
+  });
+  document.getElementById("path-clear-btn").addEventListener("click", () => {
+    builderLayout.path = [];
+    historyStack = historyStack.filter(h => h.type !== "path");
     renderBuilderPreview();
   });
 
