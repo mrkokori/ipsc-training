@@ -804,44 +804,6 @@ async function testMicrophone() {
   ok(E("settings").micSensitivity === 9, "Empfindlichkeit in den Einstellungen gespeichert");
 }
 
-async function testVoiceStart() {
-  section("Sprachstart des Par-Timers");
-
-  // Ohne SpeechRecognition (Standard in jsdom): Checkbox ist deaktiviert, mit Erklärung
-  let { w, E, $ } = boot();
-  E("openDetail")(E("DRILLS").find((d) => d.id === "std-bill-drill"));
-  ok($("#timer-voice").disabled && /nicht unterstützt/.test($("#timer-voice").closest("label").title), "Sprachstart-Checkbox ohne Browser-Unterstützung deaktiviert");
-  E("closeDetail")();
-
-  class FakeRecognition {
-    constructor() { this.started = false; }
-    start() { this.started = true; }
-    stop() { if (this.started) { this.started = false; if (this.onend) this.onend(); } }
-    fireResult(text) { this.onresult({ results: [[{ transcript: text }]] }); }
-  }
-  ({ w, E, $ } = boot({ beforeApp: (win) => { win.SpeechRecognition = FakeRecognition; } }));
-  E("openDetail")(E("DRILLS").find((d) => d.id === "std-bill-drill"));
-  ok(!$("#timer-voice").disabled, "Checkbox aktiv, wenn der Browser Spracherkennung unterstützt");
-  $("#timer-voice").checked = true;
-  $("#timer-start").click();
-  const rec = E("parTimer").voiceRecognition;
-  ok(rec.started && E("parTimer").voiceArmed && /Höre zu/.test($("#timer-display").textContent) && $("#timer-stop").disabled === false, "Start scharf gestellt: Spracherkennung läuft, Timer noch nicht");
-  rec.fireResult("bitte auf standby gehen");
-  ok(!E("parTimer").voiceArmed && !rec.started && E("parTimer").running, "erkanntes Signalwort löst den echten Timer-Start aus");
-  E("stopParTimer")();
-
-  // Falsches Wort löst nichts aus
-  $("#timer-voice").checked = true;
-  $("#timer-start").click();
-  E("parTimer").voiceRecognition.fireResult("irgendein anderer satz");
-  ok(E("parTimer").voiceArmed && /Höre zu/.test($("#timer-display").textContent), "ein nicht erkanntes Wort startet den Timer nicht");
-
-  // Stopp während des Zuhörens bricht sauber ab
-  $("#timer-stop").click();
-  ok(!E("parTimer").voiceArmed && !E("parTimer").voiceRecognition.started, "Stopp während des Zuhörens deaktiviert die Spracherkennung");
-  E("closeDetail")();
-}
-
 async function testInstallAndExportReminder() {
   section("App-Installation, Export-Erinnerung");
 
@@ -1057,7 +1019,7 @@ async function testBriefingJournalPrint() {
   $("#p-print").click();
   const svgs = [...w.document.querySelectorAll("#print-sheet svg")];
   ok(printed && svgs.length === 2 && svgs[0].getAttribute("width") === "90.0mm" && svgs[0].getAttribute("height") === "114.0mm", "Druck: 2 Ziele in exakter Größe in mm");
-  ok(/size: A4 portrait/.test($("#print-page-style").textContent) && $("#print-sheet .print-ruler-line"), "Druck: Seitenformat und 10-cm-Kontrolllinie");
+  ok($("#print-sheet").classList.contains("a4-portrait") && $("#print-sheet .print-ruler-line"), "Druck: Seitenformat über Klasse (a4-portrait) und 10-cm-Kontrolllinie");
   E("closePrintTargets")();
 
   // Einstellungen: Magazin und Design
@@ -1158,7 +1120,7 @@ function testLicenseFiles() {
 }
 
 (async () => {
-  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testPlanWalkthrough, testStageEditor, testMatches, testPlans, testTrainingSuggestion, testStats, testGoals, testMicrophone, testVoiceStart, testInstallAndExportReminder, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
+  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testPlanWalkthrough, testStageEditor, testMatches, testPlans, testTrainingSuggestion, testStats, testGoals, testMicrophone, testInstallAndExportReminder, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
     try { await suite(); } catch (e) { failed++; console.log("  ✗ Testblock abgebrochen: " + (e && e.stack || e)); }
   }
   console.log(`\n${passed} bestanden, ${failed} fehlgeschlagen`);

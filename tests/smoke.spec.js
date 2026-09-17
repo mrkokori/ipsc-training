@@ -42,6 +42,11 @@ test("App lädt und alle Hauptansichten öffnen ohne Konsolen-/CSP-Fehler", asyn
   await page.addInitScript((seed) => {
     for (const [key, value] of Object.entries(seed)) localStorage.setItem(key, JSON.stringify(value));
   }, SEED);
+  // window.print() öffnet in echten Browsern einen blockierenden System-Dialog,
+  // der im headless-Lauf nie geschlossen würde - stattdessen nur mitzählen.
+  let printCalls = 0;
+  await page.exposeFunction("__countPrint", () => { printCalls++; });
+  await page.addInitScript(() => { window.print = () => window.__countPrint(); });
 
   await page.goto("/index.html");
   await expect(page.locator("#drill-grid > *").first()).toBeVisible();
@@ -52,7 +57,6 @@ test("App lädt und alle Hauptansichten öffnen ohne Konsolen-/CSP-Fehler", asyn
     ["#plans-btn", "#plans-close"],
     ["#stats-btn", "#stats-close"],
     ["#share-multi-btn", "#multishare-close"],
-    ["#print-targets-btn", "#print-close"],
     ["#settings-btn", "#settings-close"]
   ];
   for (const [openSelector, closeSelector] of overlays) {
@@ -60,6 +64,17 @@ test("App lädt und alle Hauptansichten öffnen ohne Konsolen-/CSP-Fehler", asyn
     await expect(page.locator(closeSelector)).toBeVisible();
     await page.click(closeSelector);
   }
+
+  // Druckvorlage: printTargets() weist #print-sheet früher über ein per JS
+  // eingefügtes <style>-Element ein Seitenformat zu, was style-src 'self' blockiert
+  // hätte - jetzt über eine Klasse + benannte @page-Regel in style.css (siehe
+  // Git-Log). Die Standardwerte im Formular passen schon direkt auf A4.
+  await page.click("#print-targets-btn");
+  await expect(page.locator("#p-print")).toBeEnabled();
+  await page.click("#p-print");
+  await expect(page.locator("#print-sheet")).toHaveClass(/a4-(portrait|landscape)/);
+  expect(printCalls).toBe(1);
+  await page.click("#print-close");
 
   // Match-Auswertung: eigene Ansicht, weil ihre Punktverlust-Balken (loss-bars)
   // erst nach dem Öffnen eines konkreten Matches gerendert werden.

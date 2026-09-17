@@ -1176,6 +1176,16 @@ html[data-fontsize="large"] { font-size: 118%; }
 .journal-results { margin: 0; padding-left: 20px; color: var(--text); }
 
 /* ---------- Druckvorlage ---------- */
+/* Benannte Seiten statt eines per JS eingefügten <style>-Elements: Die CSP
+   (style-src 'self') blockiert dynamisch erzeugte <style>-Inhalte, benannte
+   @page-Regeln aus dieser Datei sind davon nicht betroffen. printTargets()
+   setzt die passende Klasse auf #print-sheet, um die Seite zuzuweisen. */
+@page a4-portrait { size: A4 portrait; margin: 10mm; }
+@page a4-landscape { size: A4 landscape; margin: 10mm; }
+
+#print-sheet.a4-portrait { page: a4-portrait; }
+#print-sheet.a4-landscape { page: a4-landscape; }
+
 #print-sheet { display: none; }
 
 @media print {

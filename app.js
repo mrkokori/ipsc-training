@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.16";
+const APP_VERSION = "2026.09.17";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -77,11 +77,7 @@ const TARGET_A_ZONE = [[-0.12, -0.89], [-0.32, -0.36], [-0.32, 0], [-0.12, 0.23]
 const PAR_RESET_MS = 4000;       // Pause zwischen zwei Durchgängen
 const NO_PAR_RESET_MS = 8000;    // ohne Par-Zeit etwas mehr Zeit für die Übung
 const parTimer = { ctx: null, token: 0, timeouts: [], nodes: [], rafId: 0, wakeLock: null, running: false,
-  mic: null, startAudio: null, ignore: [], shots: [], lastShots: [], voiceRecognition: null, voiceArmed: false };
-
-// Wörter, auf die der Sprachstart reagiert (siehe initVoiceStart) – bewusst mehrere,
-// weil Spracherkennung "Standby" nicht immer zuverlässig trifft.
-const VOICE_START_WORDS = ["standby", "start", "los", "bereit"];
+  mic: null, startAudio: null, ignore: [], shots: [], lastShots: [] };
 
 // Teilen per Link
 const SHARE_HASH_PREFIX = "#t=";
@@ -1990,13 +1986,9 @@ function printTargets() {
     document.body.appendChild(sheet);
   }
   sheet.innerHTML = buildPrintSheet(config);
-  let pageStyle = document.getElementById("print-page-style");
-  if (!pageStyle) {
-    pageStyle = document.createElement("style");
-    pageStyle.id = "print-page-style";
-    document.head.appendChild(pageStyle);
-  }
-  pageStyle.textContent = `@page { size: A4 ${config.layout.orientation}; margin: 10mm; }`;
+  // Seitenformat über eine Klasse + benannte @page-Regel in style.css statt eines
+  // per JS eingefügten <style>-Elements (das würde die CSP blockieren).
+  sheet.className = config.layout.orientation === "landscape" ? "a4-landscape" : "a4-portrait";
   window.print();
 }
 
@@ -2839,9 +2831,6 @@ function parTimerHtml(drill) {
         <label class="score-field"><span>Durchgänge</span><input type="number" id="timer-reps" step="1" min="1" max="50" inputmode="numeric" value="${settings.timerReps}"></label>
       </div>
       <label class="timer-mic-toggle"><input type="checkbox" id="timer-mic"> Schüsse per Mikrofon erkennen <span class="badge difficulty">Beta</span></label>
-      <label class="timer-mic-toggle" title="Anders als der Rest der App: Die Spracherkennung läuft über den Browser und schickt dafür Audio an dessen Anbieter (z.B. Google bei Chrome) – nicht an diese App oder ihren Server.">
-        <input type="checkbox" id="timer-voice"> Per Sprachbefehl starten („Standby“) <span class="badge difficulty">Beta</span>
-      </label>
       <div class="timer-shots hidden" id="timer-shots" aria-live="polite"></div>
       <div class="timer-actions">
         <button type="button" class="save-btn timer-start" id="timer-start">Start</button>
@@ -2857,17 +2846,13 @@ function initParTimer() {
   const startBtn = document.getElementById("timer-start");
   const stopBtn = document.getElementById("timer-stop");
   if (!startBtn) return;
-  startBtn.addEventListener("click", () => {
-    const voiceBox = document.getElementById("timer-voice");
-    if (voiceBox && voiceBox.checked && !voiceBox.disabled) armVoiceStart(); else startParTimer();
-  });
+  startBtn.addEventListener("click", startParTimer);
   document.getElementById("timer-take-time").addEventListener("click", takeMicTimeIntoScore);
   document.getElementById("timer-to-score").addEventListener("click", jumpToScoreForm);
   stopBtn.addEventListener("click", () => {
     stopParTimer();
     setTimerText("Gestoppt", "Auf Start tippen", "");
   });
-  initVoiceStart();
 }
 
 function setTimerToScoreVisible(visible) {
@@ -2945,55 +2930,6 @@ async function requestWakeLock() {
   try {
     if (navigator.wakeLock) parTimer.wakeLock = await navigator.wakeLock.request("screen");
   } catch (e) { /* nicht unterstützt oder abgelehnt */ }
-}
-
-// ---------- Sprachstart ----------
-// Ersetzt den Tippvorgang auf "Start" durch das Zuhören auf ein Signalwort – praktisch,
-// wenn man mit der Waffe schon in der Startposition steht und die Hände nicht frei hat.
-// Web Speech API: von Chrome/Edge (Desktop wie Android) unterstützt, nicht von Firefox
-// und nur eingeschränkt von Safari/iOS – deshalb die Prüfung in initVoiceStart().
-
-function initVoiceStart() {
-  const checkbox = document.getElementById("timer-voice");
-  if (!checkbox) return;
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!Recognition) {
-    checkbox.disabled = true;
-    checkbox.closest("label").title = "Sprachstart wird von diesem Browser nicht unterstützt.";
-    return;
-  }
-  const recognition = new Recognition();
-  recognition.lang = "de-DE";
-  recognition.continuous = true;
-  recognition.interimResults = false;
-  recognition.onresult = (e) => {
-    const said = normalizeSearch(e.results[e.results.length - 1][0].transcript);
-    if (VOICE_START_WORDS.some(word => said.includes(word))) {
-      disarmVoiceStart();
-      startParTimer();
-    }
-  };
-  recognition.onend = () => {
-    // Browser beenden die Erkennung nach einer Stille von selbst – solange noch
-    // scharf gestellt ist, gleich neu starten.
-    if (parTimer.voiceArmed) { try { recognition.start(); } catch (e) { /* schon aktiv */ } }
-  };
-  recognition.onerror = () => { /* z.B. "no-speech" – wird über onend neu gestartet */ };
-  parTimer.voiceRecognition = recognition;
-}
-
-function armVoiceStart() {
-  if (!parTimer.voiceRecognition) { startParTimer(); return; }
-  stopParTimer();
-  parTimer.voiceArmed = true;
-  setTimerRunning(true);
-  setTimerText("Höre zu …", "Sag „Standby“, um zu starten", "armed");
-  try { parTimer.voiceRecognition.start(); } catch (e) { /* schon aktiv */ }
-}
-
-function disarmVoiceStart() {
-  parTimer.voiceArmed = false;
-  if (parTimer.voiceRecognition) { try { parTimer.voiceRecognition.stop(); } catch (e) { /* schon gestoppt */ } }
 }
 
 async function startParTimer() {
@@ -3222,7 +3158,6 @@ function stopParTimer() {
   parTimer.nodes.forEach(osc => { try { osc.stop(); } catch (e) { /* schon beendet */ } });
   parTimer.nodes = [];
   stopMicListening();
-  disarmVoiceStart();
   parTimer.startAudio = null;
   releaseWakeLock();
   if (parTimer.running) setTimerRunning(false);
