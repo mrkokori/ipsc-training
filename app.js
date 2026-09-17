@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17.9";
+const APP_VERSION = "2026.09.17.10";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -619,17 +619,24 @@ function updateBuilderSummary() {
 }
 
 // ---------- Schussplan in der Skizze ----------
-// Reihenfolge der Ziele und Magazinwechsel, gespeichert als layout.plan:
-// [{ type: "target", index }, { type: "reload" }, ...]
+// Reihenfolge der Ziele, Magazinwechsel und Positionswechsel, gespeichert als
+// layout.plan: [{ type: "target", index }, { type: "reload" }, { type: "move", position }, ...]
+// "move" legt fest, ab wann der Schütze an layout.shooterPositions[position]
+// steht - bewusst vom Ersteller gesetzt statt aus der Geometrie geraten, weil
+// nur er weiß, welche Ziele von welcher Position aus regelkonform (90°/180°)
+// erreichbar sind.
 
 function planSteps(layout) {
   const targets = (layout && layout.targets) || [];
+  const positions = (layout && layout.shooterPositions) || [];
   let number = 0;
   return ((layout && layout.plan) || [])
     .filter(step => step.type === "reload" ||
+      (step.type === "move" && positions[step.position]) ||
       (step.type === "target" && targets[step.index] && !NO_SHOOT_TYPES.includes(targets[step.index].type)))
     .map(step => {
       if (step.type === "reload") return { type: "reload" };
+      if (step.type === "move") return { type: "move", position: step.position, shooterPosition: positions[step.position] };
       const target = targets[step.index];
       return { type: "target", index: step.index, number: ++number, target, rounds: ROUNDS_PER_TARGET[target.type] || 0 };
     });
@@ -648,6 +655,7 @@ function analyzePlan(layout, capacity = settings.magCapacity, chamber = settings
       warned = false;
       continue;
     }
+    if (step.type === "move") continue;
     total += step.rounds;
     left -= step.rounds;
     if (left < 0 && !warned) {
@@ -660,10 +668,9 @@ function analyzePlan(layout, capacity = settings.magCapacity, chamber = settings
     .map((t, i) => ({ t, i }))
     .filter(({ t, i }) => !NO_SHOOT_TYPES.includes(t.type) && !planned.has(i))
     .map(({ t }) => t.label || "Ziel");
-  const positions = (layout && layout.shooterPositions) || [];
   const path = layout && layout.path;
-  if (positions.length > 1 && (!path || path.length < 2)) {
-    warnings.push("Mehrere Schützenpositionen, aber kein Laufweg gezeichnet – „Ablauf abspielen“ zeigt dann keinen Positionswechsel.");
+  if (steps.some(s => s.type === "move") && (!path || path.length < 2)) {
+    warnings.push("Positionswechsel im Schussplan eingeplant, aber kein Laufweg gezeichnet – „Ablauf abspielen“ zeigt dann keine Bewegung.");
   }
   return { steps, total, reloads, warnings, missing };
 }
@@ -699,9 +706,11 @@ function planListHtml(layout, { compact = false } = {}) {
   // Schützenpositionen ohne Laufweg) - die Struktur-Warnungen betreffen das
   // Layout, nicht den (noch leeren) Ablauf.
   if (!result.steps.length && !result.warnings.length) return "";
-  const items = result.steps.map(step => step.type === "reload"
-    ? `<li class="plan-reload">Magazinwechsel</li>`
-    : `<li><span class="plan-num">${step.number}</span>${escapeHtml(step.target.label || "Ziel")}<span class="plan-rounds">${step.rounds} Schuss</span></li>`).join("");
+  const items = result.steps.map(step => {
+    if (step.type === "reload") return `<li class="plan-reload">Magazinwechsel</li>`;
+    if (step.type === "move") return `<li class="plan-move">→ ${escapeHtml(step.shooterPosition.label || "Position")}</li>`;
+    return `<li><span class="plan-num">${step.number}</span>${escapeHtml(step.target.label || "Ziel")}<span class="plan-rounds">${step.rounds} Schuss</span></li>`;
+  }).join("");
   return `
     <div class="plan${compact ? " plan-compact" : ""}">
       ${compact ? "" : `<div class="section-title">Schussplan</div>`}
@@ -779,14 +788,13 @@ const BULLET_FIRST_DELAY_MS = 150;
 const BULLET_GAP_MS = 420;
 const BULLET_FLIGHT_MS = 380;
 
-// Ausgangspunkt für eine fliegende Patrone bzw. den Magazinwechsel: die dem Ziel
-// (bzw. dem zuletzt beschossenen Ziel) nächstgelegene Schützenposition, oder –
-// falls keine im Layout gesetzt ist – ein Punkt unterhalb des Ziels.
-function nearestShooterOrigin(layout, point) {
-  const positions = layout.shooterPositions || [];
-  if (!positions.length) return { x: point.x, y: Math.min((layout.viewH || 500) - 20, point.y + 150) };
-  return positions.reduce((best, p) =>
-    Math.hypot(p.x - point.x, p.y - point.y) < Math.hypot(best.x - point.x, best.y - point.y) ? p : best);
+// Ausgangspunkt für eine fliegende Patrone bzw. den Magazinwechsel, wenn das
+// Layout gar keine Schützenposition definiert: ein Punkt unterhalb des
+// Ziels. Mit gesetzten Positionen entscheidet stattdessen der zuletzt
+// erreichte "move"-Schritt im Plan (siehe playPlanWalkthrough()) - nicht
+// mehr die Nähe zum Ziel, die nicht regelkonforme Zuordnungen erraten kann.
+function fallbackOrigin(layout, point) {
+  return { x: point.x, y: Math.min((layout.viewH || 500) - 20, point.y + 150) };
 }
 
 function fireBullet(svg, token, origin, target) {
@@ -814,9 +822,9 @@ function fireBullet(svg, token, origin, target) {
 }
 
 // Feuert die Schuss-Patronen eines Ziel-Schritts kurz nacheinander vom Schützen
-// zum Ziel ab, statt nur einen Marker aufs Ziel zu setzen.
-function fireBulletsForStep(svg, layout, step, token) {
-  const origin = nearestShooterOrigin(layout, step.target);
+// zum Ziel ab, statt nur einen Marker aufs Ziel zu setzen. origin kommt vom
+// Aufrufer (aktuelle Schützenposition laut Plan, siehe playPlanWalkthrough()).
+function fireBulletsForStep(svg, origin, step, token) {
   for (let i = 0; i < step.rounds; i++) {
     planPlayback.timeouts.push(setTimeout(() => {
       if (token === planPlayback.token) fireBullet(svg, token, origin, step.target);
@@ -879,14 +887,13 @@ function playPlanWalkthrough(layout) {
 
   const path = layout.path;
   const positions = layout.shooterPositions || [];
-  // Bei mehreren Schützenpositionen (z.B. "Box zu Box") steht der Schütze
-  // beim Beschießen still und läuft nur zwischen den Positionen - erkannt
-  // daran, dass sich die für ein Ziel nächstgelegene Position ändert. Mit nur
-  // einer Position (z.B. "Schießen in Bewegung") gibt es keine Haltepunkte,
-  // dort läuft der Marker wie bisher gleichmäßig über die Gesamtdauer.
-  const hasStops = path && path.length > 1 && positions.length > 1;
+  // "move"-Schritte im Plan legen fest, wann der Schütze an welcher Position
+  // steht (vom Ersteller gesetzt, siehe planSteps()-Kommentar). Ohne solche
+  // Schritte gibt es keine Haltepunkte - der Marker läuft dann wie bei
+  // "Schießen in Bewegung" gleichmäßig über die Gesamtdauer.
+  const hasMoves = steps.some(s => s.type === "move");
   let shooterMarker = null;
-  let currentShooterPos = null;
+  let currentPos = positions[0] || null;
 
   if (path && path.length > 1) {
     // Dasselbe Dreieck-Symbol wie die statischen Schützenpositionen, nicht nur
@@ -896,10 +903,8 @@ function playPlanWalkthrough(layout) {
     shooterMarker.setAttribute("class", "plan-play-shooter");
     // Farbe als Attribut statt nur per CSS-Klasse, siehe fireBullet().
     shooterMarker.setAttribute("fill", "#e8620c");
-    if (hasStops) {
-      const firstTarget = steps.find(s => s.type === "target");
-      currentShooterPos = firstTarget ? nearestShooterOrigin(layout, firstTarget.target) : positions[0];
-      placeShooterMarker(shooterMarker, currentShooterPos);
+    if (hasMoves && currentPos) {
+      placeShooterMarker(shooterMarker, currentPos);
     } else {
       const start = pointAlongPath(path, 0);
       placeShooterMarker(shooterMarker, { x: start.x, y: start.y, facing: positions[0] ? positions[0].facing : 0 });
@@ -907,7 +912,7 @@ function playPlanWalkthrough(layout) {
     svg.appendChild(shooterMarker);
   }
 
-  if (path && path.length > 1 && !hasStops) {
+  if (path && path.length > 1 && !hasMoves) {
     const totalDuration = steps.reduce((sum, s) => sum + (s.type === "reload" ? PLAN_PLAYBACK_RELOAD_MS : PLAN_PLAYBACK_TARGET_MS), 0);
     let facing = positions[0] ? positions[0].facing || 0 : 0;
     const startTime = performance.now();
@@ -923,7 +928,7 @@ function playPlanWalkthrough(layout) {
   }
 
   const listItems = [...detailContent.querySelectorAll(".plan-steps > li")];
-  let lastTargetPoint = (layout.shooterPositions && layout.shooterPositions[0]) || { x: layout.viewW / 2, y: layout.viewH - 60 };
+  let lastTargetPoint = currentPos || { x: layout.viewW / 2, y: layout.viewH - 60 };
   let reloadGroup = null;
 
   const advance = (i) => {
@@ -938,22 +943,25 @@ function playPlanWalkthrough(layout) {
     const runStep = () => {
       if (token !== planPlayback.token) return;
       if (step.type === "target") {
-        fireBulletsForStep(svg, layout, step, token);
+        fireBulletsForStep(svg, currentPos || fallbackOrigin(layout, step.target), step, token);
         lastTargetPoint = step.target;
-      } else {
-        reloadGroup = playReloadEffect(svg, nearestShooterOrigin(layout, lastTargetPoint));
+      } else if (step.type === "reload") {
+        reloadGroup = playReloadEffect(svg, currentPos || fallbackOrigin(layout, lastTargetPoint));
       }
-      const delay = step.type === "reload" ? PLAN_PLAYBACK_RELOAD_MS : PLAN_PLAYBACK_TARGET_MS;
+      const delay = step.type === "reload" ? PLAN_PLAYBACK_RELOAD_MS : step.type === "move" ? 0 : PLAN_PLAYBACK_TARGET_MS;
       planPlayback.timeouts.push(setTimeout(() => advance(i + 1), delay));
     };
 
-    if (hasStops && step.type === "target") {
-      const pos = nearestShooterOrigin(layout, step.target);
-      if (pos !== currentShooterPos) {
-        animateShooterWalk(shooterMarker, path, token, () => { currentShooterPos = pos; runStep(); });
+    // Läuft komplett layout.path entlang - passt für den üblichen Fall genau
+    // zweier Positionen. Bei mehr Positionen (aktuell keine eingebaute Übung)
+    // würde jeder Wechsel denselben ganzen Pfad abgehen, nicht nur den
+    // jeweiligen Teilabschnitt.
+    if (step.type === "move") {
+      if (shooterMarker) {
+        animateShooterWalk(shooterMarker, path, token, () => { currentPos = step.shooterPosition; runStep(); });
         return;
       }
-      currentShooterPos = pos;
+      currentPos = step.shooterPosition;
     }
     runStep();
   };
@@ -969,6 +977,17 @@ function addPlanTarget(index) {
   }
   builderLayout.plan = builderLayout.plan || [];
   builderLayout.plan.push({ type: "target", index });
+  historyStack.push({ type: "plan" });
+  renderBuilderPreview();
+}
+
+// Im Werkzeug "Schussplan" auf eine Schützenposition tippen: legt fest, dass
+// der Schütze ab hier dort steht, statt es später aus der Nähe zum Ziel zu
+// erraten (siehe planSteps()-Kommentar).
+function addPlanMove(index) {
+  if (!builderLayout.shooterPositions[index]) return;
+  builderLayout.plan = builderLayout.plan || [];
+  builderLayout.plan.push({ type: "move", position: index });
   historyStack.push({ type: "plan" });
   renderBuilderPreview();
 }
@@ -2321,6 +2340,10 @@ function sanitizeLayout(raw) {
   const plan = cleanArr(raw.plan, 300).map(step => {
     if (!isObj(step)) return null;
     if (step.type === "reload") return { type: "reload" };
+    if (step.type === "move") {
+      const position = cleanInt(step.position, -1, 0, 499);
+      return position >= 0 && position < layout.shooterPositions.length ? { type: "move", position } : null;
+    }
     const index = cleanInt(step.index, -1, 0, 499);
     return step.type === "target" && index >= 0 && index < layout.targets.length ? { type: "target", index } : null;
   }).filter(Boolean);
@@ -4706,6 +4729,7 @@ function handleBuilderTap(p, hit) {
   if (hit) {
     if (builderTool === "delete") deleteElement(hit);
     else if (builderTool === "plan" && hit.kind === "target") { addPlanTarget(hit.index); return; }
+    else if (builderTool === "plan" && hit.kind === "shooter") { addPlanMove(hit.index); return; }
     else builderSelection = { kind: hit.kind.replace(/-(start|end|line)$/, ""), index: hit.index };
     renderBuilderPreview();
     return;
@@ -4758,7 +4782,13 @@ function deleteElement(hit) {
       if (t.activatedBy === hit.index) delete t.activatedBy;
       else if (typeof t.activatedBy === "number" && t.activatedBy > hit.index) t.activatedBy--;
     }
-  } else if (kind === "shooter") L.shooterPositions.splice(hit.index, 1);
+  } else if (kind === "shooter") {
+    L.shooterPositions.splice(hit.index, 1);
+    // Schussplan an die neuen Positions-Indizes anpassen, siehe oben bei "target"
+    L.plan = (L.plan || [])
+      .filter(step => !(step.type === "move" && step.position === hit.index))
+      .map(step => step.type === "move" && step.position > hit.index ? { type: "move", position: step.position - 1 } : step);
+  }
   else if (kind === "box") L.boxes.splice(hit.index, 1);
   else if (kind === "prop") L.props.splice(hit.index, 1);
   else if (kind === "text") L.texts.splice(hit.index, 1);

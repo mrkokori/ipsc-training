@@ -17,8 +17,13 @@
   const plate = (x, y, label) => ({ type: "steel", x, y, label });
   const popper = (x, y, label) => ({ type: "popper", x, y, label });
   const shooter = (x, y, label = "Start", facing = 0) => ({ x, y, facing, label });
-  // Schussplan: Zahlen = Index des Ziels in "targets", "R" = Magazinwechsel
-  const plan = (...steps) => steps.map(st => st === "R" ? { type: "reload" } : { type: "target", index: st });
+  // Schussplan: Zahlen = Index des Ziels in "targets", "R" = Magazinwechsel,
+  // "M<n>" = Wechsel zu shooterPositions[n] (z.B. "M1" für die zweite Position)
+  const plan = (...steps) => steps.map(st => {
+    if (st === "R") return { type: "reload" };
+    if (typeof st === "string" && st[0] === "M") return { type: "move", position: Number(st.slice(1)) };
+    return { type: "target", index: st };
+  });
 
   window.IPSC_DRILLS = [
     // ---------- Ziehen ----------
@@ -236,7 +241,7 @@
         boxes: [{ x: 60, y: 380, w: 60, h: 60, label: "Box A" }, { x: 280, y: 380, w: 60, h: 60, label: "Box B" }],
         shooterPositions: [shooter(90, 410), shooter(310, 410, "Position 2")],
         path: [[120, 410], [280, 410]],
-        plan: plan(0, 1, 2, 3)
+        plan: plan(0, 1, "M1", 2, 3)
       })
     },
     {

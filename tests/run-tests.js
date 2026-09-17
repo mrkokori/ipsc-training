@@ -323,6 +323,8 @@ async function testShotPlan() {
   const small = E("analyzePlan")(presi.layout, 5, false);
   ok(small.warnings.length === 2 && /Schritt 3/.test(small.warnings[0]), "zu kleines Magazin wird mit Schritt gemeldet: " + small.warnings[0]);
   const boxToBoxLayout = E("DRILLS").find((d) => d.id === "std-box-to-box").layout;
+  const boxToBoxPlan = E("analyzePlan")(boxToBoxLayout);
+  ok(boxToBoxPlan.total === 8 && !Number.isNaN(boxToBoxPlan.total), "Box zu Box: Schusszahl zählt trotz Positionswechsel im Plan richtig (kein NaN)");
   const noPath = E("analyzePlan")({ ...boxToBoxLayout, path: [] });
   ok(noPath.warnings.some((w) => /kein Laufweg/.test(w)), "mehrere Schützenpositionen ohne Laufweg werden gewarnt");
   const withPath = E("analyzePlan")(boxToBoxLayout);
@@ -351,12 +353,17 @@ async function testShotPlan() {
 
   w.document.querySelector('.tool-select[data-tool="shooter"]').click();
   E("placeAtPoint")({ x: 60, y: 400 });
-  ok(/kein Laufweg/.test($("#se-plan-status").textContent) === false, "eine einzelne Schützenposition löst noch keine Laufweg-Warnung aus");
   E("placeAtPoint")({ x: 260, y: 400 });
-  ok(/kein Laufweg/.test($("#se-plan-status").textContent), "2 Schützenpositionen ohne Laufweg: Warnung im Editor sichtbar");
+  ok(/kein Laufweg/.test($("#se-plan-status").textContent) === false, "2 Schützenpositionen ohne eingeplanten Wechsel lösen noch keine Warnung aus");
 
-  const emptyPlanHtml = E("planListHtml")({ viewW: 400, viewH: 500, targets: [], shooterPositions: [{ x: 0, y: 0 }, { x: 1, y: 1 }], path: [], plan: [] }, { compact: true });
-  ok(/kein Laufweg/.test(emptyPlanHtml), "Warnung erscheint auch, bevor überhaupt ein Schussplan gebaut wurde (Schützenpositionen zuerst gesetzt)");
+  w.document.querySelector('.tool-select[data-tool="plan"]').click();
+  E("handleBuilderTap")({ x: 260, y: 400 }, E("hitTestBuilder")({ x: 260, y: 400 }));
+  ok(E("builderLayout").plan[4].type === "move" && E("builderLayout").plan[4].position === 1, "Tippen auf eine Schützenposition im Schussplan-Werkzeug plant einen Wechsel ein");
+  ok(/→ Position 2/.test($("#se-plan-status").textContent), "Wechsel erscheint als eigener Schritt im Live-Plan");
+  ok(/kein Laufweg/.test($("#se-plan-status").textContent), "Wechsel eingeplant, aber kein Laufweg gezeichnet: Warnung im Editor sichtbar");
+
+  const emptyPlanHtml = E("planListHtml")({ viewW: 400, viewH: 500, targets: [], shooterPositions: [{ x: 0, y: 0 }, { x: 1, y: 1, label: "Position 2" }], path: [], plan: [{ type: "move", position: 1 }] }, { compact: true });
+  ok(/kein Laufweg/.test(emptyPlanHtml), "Warnung erscheint auch, wenn der Plan sonst nur aus dem Wechsel besteht");
 
   $("#path-connect-btn").click();
   ok(JSON.stringify(E("builderLayout").path) === JSON.stringify([[60, 400], [260, 400]]), "„Positionen verbinden“ erzeugt den Laufweg aus den Schützenpositionen");
@@ -364,22 +371,24 @@ async function testShotPlan() {
   $("#path-clear-btn").click();
   ok(E("builderLayout").path.length === 0, "Laufweg löschen funktioniert weiterhin");
   E("deleteElement")({ kind: "target", index: 0 });
-  ok(JSON.stringify(E("builderLayout").plan) === JSON.stringify([{ type: "target", index: 0 }, { type: "reload" }]), "gelöschtes Ziel wird aus dem Plan entfernt, Nummern rücken nach");
+  ok(JSON.stringify(E("builderLayout").plan) === JSON.stringify([{ type: "target", index: 0 }, { type: "reload" }, { type: "move", position: 1 }]), "gelöschtes Ziel wird aus dem Plan entfernt, Nummern rücken nach (Wechsel bleibt erhalten)");
   w.document.querySelector('.tool-select[data-tool="target"]').click();
   E("placeAtPoint")({ x: 50, y: 50 });
   w.document.querySelector('.tool-select[data-tool="plan"]').click();
   E("addPlanTarget")(2);
   E("undoBuilder")();
-  ok(E("builderLayout").plan.length === 2, "Rückgängig entfernt den letzten Planschritt");
+  ok(E("builderLayout").plan.length === 3, "Rückgängig entfernt den letzten Planschritt");
   $("#f-title").value = "Plan-Test"; $("#f-category").value = "Test"; $("#f-procedure").value = "x";
   $("#create-form").dispatchEvent(new w.Event("submit", { cancelable: true }));
   const saved = E("customDrills").find((d) => d.title === "Plan-Test");
-  ok(saved && saved.layout.plan.length === 2, "Plan wird mit dem Training gespeichert");
+  ok(saved && saved.layout.plan.length === 3 && saved.layout.plan.some((s) => s.type === "move"), "Plan (inkl. Wechsel) wird mit dem Training gespeichert");
   const link = await E("buildShareLink")(saved);
   const decoded = await E("decodeSharedHash")(link.slice(link.indexOf("#")));
-  ok(decoded.layout.plan.length === 2, "Plan bleibt beim Teilen per Link erhalten");
+  ok(decoded.layout.plan.length === 3 && decoded.layout.plan.some((s) => s.type === "move"), "Plan (inkl. Wechsel) bleibt beim Teilen per Link erhalten");
   const bad = E("sanitizeLayout")({ targets: [{ type: "paper", x: 1, y: 1 }], plan: [{ type: "target", index: 5 }, { type: "target", index: "0" }, { type: "evil" }, { type: "reload" }] });
   ok(JSON.stringify(bad.plan) === JSON.stringify([{ type: "target", index: 0 }, { type: "reload" }]), "ungültige Planschritte werden verworfen");
+  const badMove = E("sanitizeLayout")({ targets: [{ type: "paper", x: 1, y: 1 }], shooterPositions: [{ x: 1, y: 1 }], plan: [{ type: "move", position: 0 }, { type: "move", position: 5 }, { type: "move", position: "evil" }] });
+  ok(JSON.stringify(badMove.plan) === JSON.stringify([{ type: "move", position: 0 }]), "ungültige Positionswechsel (fehlende Schützenposition) werden verworfen");
 }
 
 async function testPlanWalkthrough() {
@@ -464,16 +473,19 @@ async function testPlanWalkthrough() {
   E("closeDetail")();
 
   // Mehrere Schützenpositionen (z.B. "Box zu Box"): der Schütze steht beim
-  // Beschießen still und läuft nur zwischen den Positionen. Eigener,
-  // schnellerer Testdrill mit nur 2 Zielen statt der 4 von std-box-to-box.
+  // Beschießen still und läuft nur dann, wenn ein "move"-Schritt im Plan
+  // steht - nicht mehr aus der Nähe zum Ziel geraten (siehe planSteps()).
+  // T1 liegt hier absichtlich näher an Position 2 als an Start, damit ein
+  // Test fehlschlagen würde, der noch auf der alten Geometrie-Vermutung
+  // basiert - der Plan sagt trotzdem "erst Start, dann wechseln".
   const walkDrill = {
     title: "Walk-Test", category: "Test", procedure: "x",
     layout: {
       viewW: 400, viewH: 500,
-      targets: [{ type: "paper", x: 90, y: 110, label: "T1" }, { type: "paper", x: 310, y: 110, label: "T2" }],
+      targets: [{ type: "paper", x: 280, y: 110, label: "T1" }, { type: "paper", x: 90, y: 110, label: "T2" }],
       shooterPositions: [{ x: 90, y: 410, label: "Start", facing: 0 }, { x: 310, y: 410, label: "Position 2", facing: 0 }],
       path: [[90, 410], [310, 410]],
-      plan: [{ type: "target", index: 0 }, { type: "target", index: 1 }]
+      plan: [{ type: "target", index: 0 }, { type: "move", position: 1 }, { type: "target", index: 1 }]
     }
   };
   E("openDetail")(walkDrill);
@@ -481,14 +493,19 @@ async function testPlanWalkthrough() {
   const walkShooter = $("#plan-play-shooter");
   const walkStartPoints = walkShooter.getAttribute("points");
 
-  await sleep(600);
-  ok($("#plan-play-shooter").getAttribute("points") === walkStartPoints, "steht beim Beschießen von T1 (Position „Start“ ist am nächsten) still");
+  await sleep(200);
+  const firstBullets = $$(".plan-play-bullet");
+  ok(firstBullets.length >= 1 && firstBullets.every((b) => Number(b.getAttribute("cx")) < 200), "T1 wird trotz Nähe zu Position 2 von Start aus beschossen (Plan, nicht Geometrie)");
+
+  await sleep(400);
+  ok($("#plan-play-shooter").getAttribute("points") === walkStartPoints, "steht beim Beschießen von T1 still");
 
   await sleep(700);
-  ok($("#plan-play-shooter").getAttribute("points") !== walkStartPoints, "läuft nach T1 zu „Position 2“, weil T2 dort näher ist");
+  ok($("#plan-play-shooter").getAttribute("points") !== walkStartPoints, "läuft erst beim eingeplanten „move“-Schritt zu „Position 2“");
 
-  await sleep(1300);
-  ok($$(".plan-play-bullet").length >= 1, "nach Ankunft an „Position 2“ wird erst geschossen (Patrone für T2 unterwegs)");
+  await sleep(1200);
+  const secondBullets = $$(".plan-play-bullet");
+  ok(secondBullets.length >= 1 && secondBullets.every((b) => Number(b.getAttribute("cx")) > 200), "T2 wird nach dem Wechsel von Position 2 aus beschossen");
 
   E("stopPlanWalkthrough")();
   E("closeDetail")();
@@ -515,10 +532,8 @@ async function testPlanWalkthrough() {
   ok(!$(".plan-play-mag-out"), "Stoppen entfernt auch die Magazin-Animation");
   E("closeDetail")();
 
-  const origin1 = E("nearestShooterOrigin")({ shooterPositions: [{ x: 10, y: 10 }, { x: 500, y: 500 }] }, { x: 20, y: 20 });
-  ok(origin1.x === 10 && origin1.y === 10, "nearestShooterOrigin: wählt die nächste Schützenposition");
-  const origin2 = E("nearestShooterOrigin")({ shooterPositions: [], viewH: 500 }, { x: 100, y: 100 });
-  ok(origin2.x === 100 && origin2.y === 250, "nearestShooterOrigin: ohne Schützenposition ein Punkt unterhalb des Ziels");
+  const fallback = E("fallbackOrigin")({ viewH: 500 }, { x: 100, y: 100 });
+  ok(fallback.x === 100 && fallback.y === 250, "fallbackOrigin: ohne Schützenposition ein Punkt unterhalb des Ziels");
 
   const along = E("pointAlongPath");
   ok(JSON.stringify(along([[0, 0], [10, 0], [10, 10]], 0)) === JSON.stringify({ x: 0, y: 0 }), "pointAlongPath: Anfang bei Anteil 0");

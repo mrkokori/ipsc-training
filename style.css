@@ -1323,6 +1323,13 @@ html[data-fontsize="large"] { font-size: 118%; }
   color: var(--text-dim);
 }
 
+.plan-steps li.plan-move {
+  padding: 4px 10px;
+  border-style: dashed;
+  border-color: #7fbf7f;
+  color: #7fbf7f;
+}
+
 .plan-summary { margin: 0; color: var(--text-dim); font-size: 0.85rem; }
 .plan-warning { margin: 4px 0 0; color: #e8a04a; font-size: 0.85rem; }
 [data-theme="light"] .plan-warning { color: #9a5a00; }
