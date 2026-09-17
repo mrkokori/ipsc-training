@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17.8";
+const APP_VERSION = "2026.09.17.9";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -596,11 +596,16 @@ function briefingHtml(drill) {
 }
 
 function updateBuilderSummary() {
-  const el = document.getElementById("builder-summary");
-  if (!el) return;
   const sum = layoutTargetSummary(builderLayout);
   const planEl = document.getElementById("builder-plan");
   if (planEl) planEl.innerHTML = planListHtml(builderLayout, { compact: true });
+  // Dieselbe Live-Ansicht auch direkt im Stage-Editor, damit man Schussplan,
+  // Warnungen (z.B. fehlender Laufweg) und Magazinwechsel sofort beim
+  // Bearbeiten sieht, ohne den Editor erst schließen zu müssen.
+  const sePlanEl = document.getElementById("se-plan-status");
+  if (sePlanEl) sePlanEl.innerHTML = planListHtml(builderLayout, { compact: true });
+  const el = document.getElementById("builder-summary");
+  if (!el) return;
   if (!sum.rounds) { el.innerHTML = ""; return; }
   const parts = [];
   if (sum.paper) parts.push(`${sum.paper} Papier`);
@@ -655,6 +660,11 @@ function analyzePlan(layout, capacity = settings.magCapacity, chamber = settings
     .map((t, i) => ({ t, i }))
     .filter(({ t, i }) => !NO_SHOOT_TYPES.includes(t.type) && !planned.has(i))
     .map(({ t }) => t.label || "Ziel");
+  const positions = (layout && layout.shooterPositions) || [];
+  const path = layout && layout.path;
+  if (positions.length > 1 && (!path || path.length < 2)) {
+    warnings.push("Mehrere Schützenpositionen, aber kein Laufweg gezeichnet – „Ablauf abspielen“ zeigt dann keinen Positionswechsel.");
+  }
   return { steps, total, reloads, warnings, missing };
 }
 
@@ -685,18 +695,21 @@ function planBadgesSvg(layout) {
 
 function planListHtml(layout, { compact = false } = {}) {
   const result = analyzePlan(layout);
-  if (!result.steps.length) return "";
+  // Auch ohne Schussplan-Schritte zeigen, wenn es eine Warnung gibt (z.B.
+  // Schützenpositionen ohne Laufweg) - die Struktur-Warnungen betreffen das
+  // Layout, nicht den (noch leeren) Ablauf.
+  if (!result.steps.length && !result.warnings.length) return "";
   const items = result.steps.map(step => step.type === "reload"
     ? `<li class="plan-reload">Magazinwechsel</li>`
     : `<li><span class="plan-num">${step.number}</span>${escapeHtml(step.target.label || "Ziel")}<span class="plan-rounds">${step.rounds} Schuss</span></li>`).join("");
   return `
     <div class="plan${compact ? " plan-compact" : ""}">
       ${compact ? "" : `<div class="section-title">Schussplan</div>`}
-      <ol class="plan-steps">${items}</ol>
-      <p class="plan-summary">${result.total} Schuss, ${result.reloads === 0 ? "kein Magazinwechsel" : `${result.reloads} Magazinwechsel`} geplant (Magazin ${settings.magCapacity}${settings.chamberLoaded ? "+1" : ""})</p>
+      ${result.steps.length ? `<ol class="plan-steps">${items}</ol>` : ""}
+      ${result.steps.length ? `<p class="plan-summary">${result.total} Schuss, ${result.reloads === 0 ? "kein Magazinwechsel" : `${result.reloads} Magazinwechsel`} geplant (Magazin ${settings.magCapacity}${settings.chamberLoaded ? "+1" : ""})</p>` : ""}
       ${result.warnings.map(w => `<p class="plan-warning">⚠ ${escapeHtml(w)}</p>`).join("")}
-      ${result.missing.length ? `<p class="plan-warning">Nicht im Plan: ${escapeHtml(result.missing.join(", "))}</p>` : ""}
-      ${compact ? "" : `<button type="button" class="tool-btn" id="plan-play-btn">▶ Ablauf abspielen</button>`}
+      ${result.steps.length && result.missing.length ? `<p class="plan-warning">Nicht im Plan: ${escapeHtml(result.missing.join(", "))}</p>` : ""}
+      ${!compact && result.steps.length ? `<button type="button" class="tool-btn" id="plan-play-btn">▶ Ablauf abspielen</button>` : ""}
     </div>`;
 }
 
@@ -4402,6 +4415,16 @@ function initBuilder() {
   });
   document.getElementById("path-clear-btn").addEventListener("click", () => {
     builderLayout.path = [];
+    historyStack = historyStack.filter(h => h.type !== "path");
+    renderBuilderPreview();
+  });
+  document.getElementById("path-connect-btn").addEventListener("click", () => {
+    const positions = builderLayout.shooterPositions || [];
+    if (positions.length < 2) {
+      if (builderHint) builderHint.textContent = "Mindestens 2 Schützenpositionen nötig, um einen Laufweg zu verbinden.";
+      return;
+    }
+    builderLayout.path = positions.map(p => [p.x, p.y]);
     historyStack = historyStack.filter(h => h.type !== "path");
     renderBuilderPreview();
   });

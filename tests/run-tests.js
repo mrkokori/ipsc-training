@@ -322,12 +322,20 @@ async function testShotPlan() {
   ok(a.total === 12 && a.reloads === 1 && a.warnings.length === 0 && a.missing.length === 0, "El Presidente: 12 Schuss, 1 Wechsel, keine Warnung");
   const small = E("analyzePlan")(presi.layout, 5, false);
   ok(small.warnings.length === 2 && /Schritt 3/.test(small.warnings[0]), "zu kleines Magazin wird mit Schritt gemeldet: " + small.warnings[0]);
+  const boxToBoxLayout = E("DRILLS").find((d) => d.id === "std-box-to-box").layout;
+  const noPath = E("analyzePlan")({ ...boxToBoxLayout, path: [] });
+  ok(noPath.warnings.some((w) => /kein Laufweg/.test(w)), "mehrere Schützenpositionen ohne Laufweg werden gewarnt");
+  const withPath = E("analyzePlan")(boxToBoxLayout);
+  ok(!withPath.warnings.some((w) => /kein Laufweg/.test(w)), "mit gesetztem Laufweg keine Warnung");
   E("openDetail")(presi);
   ok($$(".plan-steps li").length === 7 && $$(".plan-steps .plan-reload").length === 1, "Detailansicht zeigt den Schussplan");
   ok($$("#detail-content .plan-badge").length === 3 && $$("#detail-content .plan-badge text")[0].textContent === "1/4", "Skizze zeigt Reihenfolge-Nummern an den Zielen");
   E("closeDetail")();
 
   E("openCreate")();
+  $("#path-connect-btn").click();
+  ok(/Mindestens 2 Schützenpositionen/.test($("#builder-hint").textContent), "„Positionen verbinden“ ohne genug Positionen: Hinweis statt Absturz");
+
   w.document.querySelector('.tool-select[data-tool="target"]').click();
   E("placeAtPoint")({ x: 100, y: 100 });
   E("placeAtPoint")({ x: 200, y: 100 });
@@ -339,6 +347,22 @@ async function testShotPlan() {
   E("addPlanTarget")(0);
   ok(E("builderLayout").plan.length === 4, "No-Shoot lässt sich nicht einplanen");
   ok($$("#builder-plan .plan-steps li").length === 4 && /Nicht im Plan/.test($("#builder-plan").textContent) === false, "Editor zeigt den Plan live");
+  ok($$("#se-plan-status .plan-steps li").length === 4, "derselbe Live-Plan erscheint auch direkt im Stage-Editor selbst");
+
+  w.document.querySelector('.tool-select[data-tool="shooter"]').click();
+  E("placeAtPoint")({ x: 60, y: 400 });
+  ok(/kein Laufweg/.test($("#se-plan-status").textContent) === false, "eine einzelne Schützenposition löst noch keine Laufweg-Warnung aus");
+  E("placeAtPoint")({ x: 260, y: 400 });
+  ok(/kein Laufweg/.test($("#se-plan-status").textContent), "2 Schützenpositionen ohne Laufweg: Warnung im Editor sichtbar");
+
+  const emptyPlanHtml = E("planListHtml")({ viewW: 400, viewH: 500, targets: [], shooterPositions: [{ x: 0, y: 0 }, { x: 1, y: 1 }], path: [], plan: [] }, { compact: true });
+  ok(/kein Laufweg/.test(emptyPlanHtml), "Warnung erscheint auch, bevor überhaupt ein Schussplan gebaut wurde (Schützenpositionen zuerst gesetzt)");
+
+  $("#path-connect-btn").click();
+  ok(JSON.stringify(E("builderLayout").path) === JSON.stringify([[60, 400], [260, 400]]), "„Positionen verbinden“ erzeugt den Laufweg aus den Schützenpositionen");
+  ok(/kein Laufweg/.test($("#se-plan-status").textContent) === false, "Warnung verschwindet, sobald der Laufweg gesetzt ist");
+  $("#path-clear-btn").click();
+  ok(E("builderLayout").path.length === 0, "Laufweg löschen funktioniert weiterhin");
   E("deleteElement")({ kind: "target", index: 0 });
   ok(JSON.stringify(E("builderLayout").plan) === JSON.stringify([{ type: "target", index: 0 }, { type: "reload" }]), "gelöschtes Ziel wird aus dem Plan entfernt, Nummern rücken nach");
   w.document.querySelector('.tool-select[data-tool="target"]').click();

@@ -1583,6 +1583,11 @@ body.stage-editor-open { overflow: hidden; }
   background: var(--bg-elevated);
   display: flex;
   flex-direction: column;
+  /* .builder-toolbar (Basisklasse) setzt flex-wrap: wrap für die horizontale
+     Werkzeugleiste im Formular - hier mit flex-direction: column würde das
+     bei zu viel Inhalt eine zweite, unsichtbar nach rechts abgeschnittene
+     Spalte erzeugen statt zu scrollen. */
+  flex-wrap: nowrap;
   gap: 12px;
   margin: 0;
 }
@@ -1604,6 +1609,15 @@ body.stage-editor-open { overflow: hidden; }
 .se-tools .tool-btn { padding: 6px 9px; font-size: 0.8rem; }
 .se-tools .tool-select.active { border-color: var(--accent); background: rgba(232, 98, 12, 0.18); color: var(--text); }
 .se-tools .tool-icon { width: 20px; height: 20px; }
+
+/* Live-Schussplan direkt im Stage-Editor, siehe updateBuilderSummary() */
+.se-plan-status {
+  display: block;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  font-size: 0.8rem;
+}
+.se-plan-status .plan-steps li { padding: 4px 8px; }
 
 .se-canvas {
   position: relative;
