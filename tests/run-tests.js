@@ -346,8 +346,11 @@ async function testShotPlan() {
   w.document.querySelector('.tool-select[data-tool="plan"]').click();
   E("addPlanTarget")(0); E("addPlanTarget")(2); E("addPlanTarget")(1);
   $("#plan-reload-btn").click();
+  ok(/Auf ein Ziel/.test($("#builder-hint").textContent), "Magazinwechsel-Button wartet auf einen Klick auf ein Ziel");
+  E("handleBuilderTap")({ x: 200, y: 100 }, E("hitTestBuilder")({ x: 200, y: 100 }));
   E("addPlanTarget")(0);
   ok(E("builderLayout").plan.length === 4, "No-Shoot lässt sich nicht einplanen");
+  ok(JSON.stringify(E("builderLayout").plan.map((s) => s.type)) === JSON.stringify(["target", "target", "reload", "target"]), "Magazinwechsel landet direkt nach dem angetippten Ziel");
   ok($$("#builder-plan .plan-steps li").length === 4 && /Nicht im Plan/.test($("#builder-plan").textContent) === false, "Editor zeigt den Plan live");
   ok($$("#se-plan-status .plan-steps li").length === 4, "derselbe Live-Plan erscheint auch direkt im Stage-Editor selbst");
 
@@ -389,6 +392,27 @@ async function testShotPlan() {
   ok(JSON.stringify(bad.plan) === JSON.stringify([{ type: "target", index: 0 }, { type: "reload" }]), "ungültige Planschritte werden verworfen");
   const badMove = E("sanitizeLayout")({ targets: [{ type: "paper", x: 1, y: 1 }], shooterPositions: [{ x: 1, y: 1 }], plan: [{ type: "move", position: 0 }, { type: "move", position: 5 }, { type: "move", position: "evil" }] });
   ok(JSON.stringify(badMove.plan) === JSON.stringify([{ type: "move", position: 0 }]), "ungültige Positionswechsel (fehlende Schützenposition) werden verworfen");
+
+  // Magazinwechsel gezielt nach einem früheren (nicht dem zuletzt geplanten) Ziel einfügen
+  ({ w, E, $, $$ } = boot());
+  E("openCreate")();
+  w.document.querySelector('.tool-select[data-tool="target"]').click();
+  E("placeAtPoint")({ x: 100, y: 100 });
+  E("placeAtPoint")({ x: 200, y: 100 });
+  E("placeAtPoint")({ x: 300, y: 100 });
+  w.document.querySelector('.tool-select[data-tool="plan"]').click();
+  E("addPlanTarget")(0); E("addPlanTarget")(1); E("addPlanTarget")(2);
+  ok(!$$("#builder-svg .reload-badge").length, "kein Magazinwechsel-Symbol in der Skizze, solange keiner geplant ist");
+
+  $("#plan-reload-btn").click();
+  E("handleBuilderTap")({ x: 100, y: 100 }, E("hitTestBuilder")({ x: 100, y: 100 }));
+  ok(JSON.stringify(E("builderLayout").plan.map((s) => s.type)) === JSON.stringify(["target", "reload", "target", "target"]), "Magazinwechsel landet nach dem angetippten (nicht dem letzten) Ziel");
+  ok($$("#builder-svg .reload-badge").length === 1, "Magazin-Symbol erscheint in der Skizze beim betroffenen Ziel");
+
+  $("#plan-reload-btn").click();
+  E("handleBuilderTap")({ x: 500, y: 500 }, E("hitTestBuilder")({ x: 500, y: 500 }));
+  ok(/Ziel ist noch nicht/.test($("#builder-hint").textContent) === false, "Klick daneben bricht das Einfügen einfach ab, ohne Fehlermeldung");
+  ok(E("builderLayout").plan.length === 4, "kein zusätzlicher Schritt, wenn daneben getippt wird");
 }
 
 async function testPlanWalkthrough() {

@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17.10";
+const APP_VERSION = "2026.09.17.11";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -140,6 +140,7 @@ let builderPanState = null;
 let builderPinch = null;
 let builderPointerDownClient = null;
 let pickActivatorFor = null;      // Index des Ziels, dem gerade ein Auslöser zugewiesen wird
+let pickReloadTarget = false;     // wartet auf einen Klick aufs Ziel, nach dem der Magazinwechsel eingefügt wird
 
 const TARGET_NAMES = {
   paper: "Papierziel", mini: "Mini-Target", noshoot: "No-Shoot", steel: "Plate", popper: "Popper",
@@ -700,6 +701,33 @@ function planBadgesSvg(layout) {
   return out.join("");
 }
 
+// Kleines Magazin-Symbol an der oberen linken Ecke jedes Ziels, nach dem laut
+// Plan gewechselt wird - siehe insertReloadAfterTarget(). Damit bleibt in der
+// Skizze selbst sichtbar, wo genau der Magazinwechsel sitzt, nicht nur in der
+// Schussplan-Liste darunter.
+function reloadBadgesSvg(layout) {
+  const steps = planSteps(layout);
+  const afterTargets = new Set();
+  for (let i = 0; i < steps.length - 1; i++) {
+    if (steps[i].type === "target" && steps[i + 1].type === "reload") afterTargets.add(steps[i].index);
+  }
+  if (!afterTargets.size) return "";
+  const out = [];
+  for (const index of afterTargets) {
+    const t = layout.targets[index];
+    if (!t) continue;
+    const small = { steel: [12, 12], metalns: [12, 12], popper: [11, 23], minipopper: [8, 16], mini: [MINI_HW, MINI_HH] }[t.type];
+    const [dx, dy] = small || [TARGET_HW, TARGET_HH];
+    const x = t.x - dx + 2, y = t.y - dy - 2;
+    out.push(`<g class="reload-badge">
+      <title>Magazinwechsel nach diesem Ziel</title>
+      <rect x="${x - 9}" y="${y - 8}" width="18" height="16" rx="4" fill="#7fb0e8" stroke="#0b0d10" stroke-width="1"/>
+      <rect x="${x - 3}" y="${y - 5}" width="6" height="10" rx="1" fill="#0b0d10"/>
+    </g>`);
+  }
+  return out.join("");
+}
+
 function planListHtml(layout, { compact = false } = {}) {
   const result = analyzePlan(layout);
   // Auch ohne Schussplan-Schritte zeigen, wenn es eine Warnung gibt (z.B.
@@ -990,6 +1018,27 @@ function addPlanMove(index) {
   builderLayout.plan.push({ type: "move", position: index });
   historyStack.push({ type: "plan" });
   renderBuilderPreview();
+}
+
+// Fügt einen Magazinwechsel direkt nach dem letzten Vorkommen des gewählten
+// Ziels im Plan ein, statt ihn wie zuvor immer nur ans aktuelle Ende
+// anzuhängen - so bleibt sichtbar (und über den Klick steuerbar), an
+// welcher Stelle genau gewechselt wird, siehe plan-reload-btn oben.
+// Kein historyStack-Eintrag: die Einfügestelle liegt oft nicht am Ende des
+// Arrays, ein generisches Undo (immer letztes Element entfernen) würde dort
+// sonst den falschen Schritt löschen.
+function insertReloadAfterTarget(index) {
+  const plan = builderLayout.plan || [];
+  let insertAt = -1;
+  for (let i = plan.length - 1; i >= 0; i--) {
+    if (plan[i].type === "target" && plan[i].index === index) { insertAt = i + 1; break; }
+  }
+  if (insertAt === -1) {
+    if (builderHint) builderHint.textContent = "Dieses Ziel ist noch nicht im Schussplan.";
+    return;
+  }
+  plan.splice(insertAt, 0, { type: "reload" });
+  builderLayout.plan = plan;
 }
 
 // ---------- Match-Analyse ----------
@@ -4426,10 +4475,12 @@ function initBuilder() {
   document.getElementById("undo-btn").addEventListener("click", undoBuilder);
   document.getElementById("clear-builder-btn").addEventListener("click", clearBuilderKeepSize);
   document.getElementById("plan-reload-btn").addEventListener("click", () => {
-    builderLayout.plan = builderLayout.plan || [];
-    builderLayout.plan.push({ type: "reload" });
-    historyStack.push({ type: "plan" });
-    renderBuilderPreview();
+    if (!(builderLayout.plan || []).some(step => step.type === "target")) {
+      if (builderHint) builderHint.textContent = "Erst ein Ziel in den Schussplan aufnehmen.";
+      return;
+    }
+    pickReloadTarget = true;
+    if (builderHint) builderHint.textContent = "Auf ein Ziel tippen, nach dem der Magazinwechsel eingefügt werden soll.";
   });
   document.getElementById("plan-clear-btn").addEventListener("click", () => {
     builderLayout.plan = [];
@@ -4673,7 +4724,7 @@ function onBuilderPointerMove(e) {
   if (!didDrag) return;
 
   if (dragState) {
-    if (builderTool === "delete" || builderTool === "plan" || pickActivatorFor !== null) return;
+    if (builderTool === "delete" || builderTool === "plan" || pickActivatorFor !== null || pickReloadTarget) return;
     moveElement(dragState, snapPoint(svgPoint(e)));
     renderBuilderPreview();
   } else if (builderPanState) {
@@ -4722,6 +4773,13 @@ function handleBuilderTap(p, hit) {
       builderSelection = { kind: "target", index: pickActivatorFor };
     }
     pickActivatorFor = null;
+    if (builderHint) builderHint.textContent = TOOL_HINTS[builderTool] || "";
+    renderBuilderPreview();
+    return;
+  }
+  if (pickReloadTarget) {
+    if (hit && hit.kind === "target") insertReloadAfterTarget(hit.index);
+    pickReloadTarget = false;
     if (builderHint) builderHint.textContent = TOOL_HINTS[builderTool] || "";
     renderBuilderPreview();
     return;
@@ -5068,6 +5126,7 @@ function renderLayoutInner(layout) {
   }
 
   parts.push(planBadgesSvg(layout));
+  parts.push(reloadBadgesSvg(layout));
 
   return parts.join("\n");
 }
