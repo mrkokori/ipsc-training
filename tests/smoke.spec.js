@@ -56,6 +56,7 @@ test("App lädt und alle Hauptansichten öffnen ohne Konsolen-/CSP-Fehler", asyn
     // Trainingsplan-Liste zeigt pro Eintrag einen Fortschrittsbalken (plan-progress)
     ["#plans-btn", "#plans-close"],
     ["#stats-btn", "#stats-close"],
+    ["#rules-btn", "#rules-close"],
     ["#share-multi-btn", "#multishare-close"],
     ["#settings-btn", "#settings-close"]
   ];
@@ -87,6 +88,16 @@ test("App lädt und alle Hauptansichten öffnen ohne Konsolen-/CSP-Fehler", asyn
   await page.click("#add-drill-btn");
   await expect(page.locator("#create-overlay")).toBeVisible();
   await page.click("#create-close");
+
+  // Regel-Quiz: eine Runde starten, damit der Fortschrittsbalken (per CSSOM, nicht
+  // per style-Attribut gesetzt) und die Antwort-Markierungen gerendert werden
+  await page.click("#rules-btn");
+  await page.click("#rules-content [data-action=start]");
+  await page.click("#rules-content .rq-opt >> nth=0");
+  const check = page.locator("#rules-content [data-action=check]");
+  if (await check.count()) await check.click();
+  await expect(page.locator("#rules-content .rq-feedback")).toBeVisible();
+  await page.click("#rules-close");
 
   // Detailansicht einer Übung (SVG-Skizze, Ergebnis-Formular)
   await page.click("#drill-grid .drill-card >> nth=0");

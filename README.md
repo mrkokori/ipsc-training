@@ -19,6 +19,7 @@ Eine Web-App für IPSC-Schützen: Übungen finden, Aufbau ansehen, mit Par-Timer
 - **Trainingspläne:** drei Vorlagen (Trockentraining, Match-Vorbereitung, Scharfschießen) und eigene Pläne mit Fortschritt
 - **Schusserkennung per Mikrofon (Beta)** im Par-Timer: erster Schuss, Splits und Zeit direkt ins Ergebnis übernehmen – die Audiodaten bleiben auf dem Gerät
 - **Trainingstagebuch** mit Scharf- und Trockentraining, Munitionsverbrauch pro Monat und Jahr
+- **Regel-Quiz Handgun** nach den IPSC Handgun Rules (Jan 2026): 234 Einzelfragen und 12 Mehrfachauswahl-Fragen, die bei jedem Durchgang neu zusammengestellt werden. Filter nach Kapitel und Fragetyp, Erklärung mit Regelnummer, „Nur meine Fehler“ üben
 - **Ziele zum Ausdrucken** fürs Trockentraining, maßstabsgetreu verkleinert
 - **Heller Modus und große Schrift** für draußen am Stand
 - **Export und Import** aller Daten als JSON-Datei, Ergebnisse zusätzlich als CSV für Excel
@@ -35,6 +36,7 @@ Alle Trainings, Ergebnisse und Einstellungen werden ausschließlich lokal im Bro
 | `app.js` | gesamte App-Logik |
 | `style.css` | Gestaltung |
 | `data/drills.js` | Standard-Übungen |
+| `data/rules-quiz.js` | Fragenkatalog des Regel-Quiz (IPSC Handgun Rules) |
 | `lib/qrcode.js` | QR-Code-Erzeugung (Fremdbibliothek, MIT-Lizenz) |
 | `sw.js` | Service Worker für Offline-Betrieb |
 | `tests/run-tests.js` | automatische Tests |
