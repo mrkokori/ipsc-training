@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.09.17.11";
+const APP_VERSION = "2026.11.15.1";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -22,6 +22,13 @@ const STORAGE_WARNING_KEY = "ipscStorageWarningDismissedV2";
 const FAVORITES_KEY = "ipscFavorites";
 const GOALS_KEY = "ipscGoals";
 const SETTINGS_KEY = "ipscSettings";
+
+// Regel-Quiz (Logik weiter unten bei initRulesQuiz)
+const RULES_QUIZ_KEY = "ipscRulesQuiz";
+const RQ_COUNTS = [10, 20, 40];
+const RQ_TYPES = { mixed: "Gemischt", single: "Eine Antwort", multi: "Mehrere Antworten" };
+let rulesQuiz = { stats: {}, round: 0, prefs: { chapters: [], count: 20, type: "mixed" } };
+let rqRun = null; // laufende Runde
 
 // Einstellungen
 const TIMER_DELAYS = { "2-4": "zufällig 2–4 s", "1-3": "zufällig 1–3 s", "3-3": "fest 3 s" };
@@ -273,6 +280,7 @@ async function init() {
   safeInit("Trainingstagebuch", initJournal);
   safeInit("Matches", initMatches);
   safeInit("Statistik", initStats);
+  safeInit("Regel-Quiz", initRulesQuiz);
   safeInit("Trainingspläne", initPlans);
   safeInit("Druckvorlagen", initPrintTargets);
   safeInit("Mehrere teilen", initMultiShare);
@@ -284,7 +292,7 @@ async function init() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (closeStageEditor()) return;
-      closeDetail(); closeCreate(); closeSettings(); closeJournal(); closePrintTargets(); closeMatches(); closePlans(); closeStats(); closeMultiShare();
+      closeDetail(); closeCreate(); closeSettings(); closeJournal(); closePrintTargets(); closeMatches(); closePlans(); closeStats(); closeRulesQuiz(); closeMultiShare();
     }
   });
 
@@ -1156,6 +1164,375 @@ function checkTrainingSuggestion() {
     banner.classList.add("hidden");
     localStorage.setItem(TRAINING_SUGGESTION_DISMISSED_KEY, today);
   });
+}
+
+// ---------- Regel-Quiz: IPSC Handgun Rules (Fragen in data/rules-quiz.js) ----------
+// Einfach-Fragen kommen aus einem festen Katalog. Mehrfach-Antwort-Fragen werden
+// bei jedem Aufruf neu aus Aussagen-Pools gemischt, so dass sie sich ständig ändern.
+// Die Auswahl bevorzugt neue und zuletzt falsch beantwortete Fragen und meidet
+// Fragen aus der letzten Runde. Fortschritt bleibt lokal (ipscRulesQuiz).
+
+
+function rqData() {
+  const d = window.IPSC_RULES_QUIZ;
+  return d && Array.isArray(d.single) && Array.isArray(d.pools) ? d : { chapters: {}, single: [], pools: [] };
+}
+
+// Stabile ID aus dem Fragetext, damit der Fortschritt auch nach Umsortieren passt
+function rqHash(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+function rqSingleId(q) { return "s-" + rqHash(q[2]); }
+function rqPoolId(p) { return "p-" + p.id; }
+
+function sanitizeRulesQuiz(raw) {
+  const out = { stats: {}, round: 0, prefs: { chapters: [], count: 20, type: "mixed" } };
+  if (!raw || typeof raw !== "object") return out;
+  const num = (v) => (Number.isFinite(v) && v >= 0 ? Math.min(Math.floor(v), 1e6) : 0);
+  out.round = num(raw.round);
+  if (raw.stats && typeof raw.stats === "object") {
+    for (const [id, s] of Object.entries(raw.stats).slice(0, 5000)) {
+      if (!/^[sp]-[a-z0-9-]{1,40}$/.test(id) || !s || typeof s !== "object") continue;
+      out.stats[id] = { r: num(s.r), w: num(s.w), lw: s.lw === true, ls: num(s.ls) };
+    }
+  }
+  const p = raw.prefs && typeof raw.prefs === "object" ? raw.prefs : {};
+  if (Array.isArray(p.chapters)) out.prefs.chapters = p.chapters.filter((c) => Number.isInteger(c) && c >= 1 && c <= 12);
+  if (RQ_COUNTS.includes(p.count) || p.count === "all") out.prefs.count = p.count;
+  if (Object.prototype.hasOwnProperty.call(RQ_TYPES, p.type)) out.prefs.type = p.type;
+  return out;
+}
+
+function saveRulesQuiz() { saveJSON(RULES_QUIZ_KEY, rulesQuiz); }
+
+function rqShuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function rqAllChapters() { return Object.keys(rqData().chapters).map(Number); }
+function rqSelectedChapters() {
+  const sel = rulesQuiz.prefs.chapters;
+  return sel.length ? sel : rqAllChapters();
+}
+
+// Gewicht für die Auswahl: neu > zuletzt falsch > selten richtig; letzte Runde meiden
+function rqWeight(id) {
+  const s = rulesQuiz.stats[id];
+  let w = !s ? 3 : s.lw ? 4 : 1 / (1 + s.r);
+  if (s && s.ls && rulesQuiz.round - s.ls < 1) w *= 0.15;
+  return w;
+}
+
+function rqWeightedSample(items, n) {
+  const pool = items.slice(), out = [];
+  while (pool.length && out.length < n) {
+    const total = pool.reduce((sum, it) => sum + it.weight, 0);
+    let r = Math.random() * total, i = 0;
+    for (; i < pool.length - 1; i++) { r -= pool[i].weight; if (r <= 0) break; }
+    out.push(pool.splice(i, 1)[0]);
+  }
+  return out;
+}
+
+// Baut eine Mehrfach-Antwort-Frage aus einem Pool: 1–3 richtige, Rest falsch
+function rqBuildPoolQuestion(pool, avoidKey) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const total = Math.min(Math.random() < 0.5 ? 4 : 5, pool.yes.length + pool.no.length);
+    const maxCorrect = Math.min(3, pool.yes.length, total - 1);
+    const k = 1 + Math.floor(Math.random() * maxCorrect);
+    const wrongCount = Math.min(total - k, pool.no.length);
+    const opts = rqShuffle([
+      ...rqShuffle(pool.yes).slice(0, k).map((o) => ({ t: o[0], rule: o[1], why: o[2], ok: true })),
+      ...rqShuffle(pool.no).slice(0, wrongCount).map((o) => ({ t: o[0], rule: o[1], why: o[2], ok: false }))
+    ]);
+    const key = opts.map((o) => o.t).sort().join("|");
+    if (key !== avoidKey || attempt === 5) {
+      return { id: rqPoolId(pool), ch: pool.ch, rule: pool.rule, q: pool.q, multi: true, opts, key };
+    }
+  }
+}
+
+function rqBuildSingleQuestion(q) {
+  return {
+    id: rqSingleId(q), ch: q[0], rule: q[1], q: q[2], multi: false, expl: q[4],
+    opts: rqShuffle(q[3].map((t, i) => ({ t, ok: i === 0 })))
+  };
+}
+
+// Stellt eine neue Runde zusammen. onlyWrong: nur zuletzt falsch beantwortete Fragen.
+function rqBuildRound({ onlyWrong = false, retry = null } = {}) {
+  const data = rqData();
+  if (retry) {
+    return rqShuffle(retry).map((item) => item.multi
+      ? rqBuildPoolQuestion(data.pools.find((p) => rqPoolId(p) === item.id), item.key)
+      : rqBuildSingleQuestion(data.single.find((q) => rqSingleId(q) === item.id)));
+  }
+  // „Nur meine Fehler“ gilt über alle Kapitel und Fragetypen
+  const chapters = new Set(onlyWrong ? rqAllChapters() : rqSelectedChapters());
+  const type = onlyWrong ? "mixed" : rulesQuiz.prefs.type;
+  const singles = type === "multi" ? [] : data.single.filter((q) => chapters.has(q[0]));
+  const pools = type === "single" ? [] : data.pools.filter((p) => chapters.has(p.ch));
+  let candidates = [
+    ...singles.map((q) => ({ kind: "single", src: q, id: rqSingleId(q) })),
+    ...pools.map((p) => ({ kind: "pool", src: p, id: rqPoolId(p) }))
+  ];
+  if (onlyWrong) candidates = candidates.filter((c) => rulesQuiz.stats[c.id] && rulesQuiz.stats[c.id].lw);
+  const wanted = rulesQuiz.prefs.count === "all" || onlyWrong ? Infinity : rulesQuiz.prefs.count;
+
+  // Mehrfach-Pools dürfen in einer langen Runde mehrfach (mit anderer Kombination) vorkommen
+  if (!onlyWrong && pools.length && wanted !== Infinity && type === "multi") {
+    const copies = Math.ceil(wanted / pools.length);
+    const extra = [];
+    for (let c = 1; c < copies; c++) pools.forEach((p) => extra.push({ kind: "pool", src: p, id: rqPoolId(p), copy: c }));
+    candidates = candidates.concat(extra);
+  }
+  // Mehrfach-Fragen bei „Gemischt“ etwas häufiger, weil sie sich ständig neu mischen
+  const picked = rqWeightedSample(candidates.map((c) => ({ ...c, weight: rqWeight(c.id) * (c.kind === "pool" ? 1.6 : 1) * (c.copy ? 0.5 : 1) })), wanted);
+  const usedKeys = new Map();
+  return picked.map((c) => {
+    if (c.kind === "single") return rqBuildSingleQuestion(c.src);
+    const q = rqBuildPoolQuestion(c.src, usedKeys.get(c.id));
+    usedKeys.set(c.id, q.key);
+    return q;
+  });
+}
+
+function initRulesQuiz() {
+  rulesQuiz = sanitizeRulesQuiz(loadJSON(RULES_QUIZ_KEY, {}));
+  const overlayEl = document.getElementById("rules-overlay");
+  document.getElementById("rules-btn").addEventListener("click", openRulesQuiz);
+  document.getElementById("rules-close").addEventListener("click", closeRulesQuiz);
+  overlayEl.addEventListener("click", (e) => { if (e.target === overlayEl) closeRulesQuiz(); });
+  document.getElementById("rules-content").addEventListener("click", handleRulesQuizClick);
+}
+
+function openRulesQuiz() {
+  if (!rqRun) renderRulesQuizSetup();
+  const overlayEl = document.getElementById("rules-overlay");
+  if (overlayEl.classList.contains("hidden")) {
+    overlayEl.classList.remove("hidden");
+    lockBodyScroll();
+  }
+}
+
+function closeRulesQuiz() {
+  const overlayEl = document.getElementById("rules-overlay");
+  if (!overlayEl || overlayEl.classList.contains("hidden")) return;
+  overlayEl.classList.add("hidden");
+  unlockBodyScroll();
+}
+
+function rqOpenWrongCount() {
+  const data = rqData();
+  const ids = new Set([...data.single.map(rqSingleId), ...data.pools.map(rqPoolId)]);
+  return Object.entries(rulesQuiz.stats).filter(([id, s]) => s.lw && ids.has(id)).length;
+}
+
+function renderRulesQuizSetup() {
+  rqRun = null;
+  const data = rqData();
+  const sel = new Set(rqSelectedChapters());
+  const total = data.single.length + data.pools.length;
+  const seen = Object.keys(rulesQuiz.stats).length;
+  const openWrong = rqOpenWrongCount();
+  const chapterChips = Object.entries(data.chapters).map(([k, label]) => {
+    const n = data.single.filter((q) => q[0] === Number(k)).length + data.pools.filter((p) => p.ch === Number(k)).length;
+    return `<button type="button" class="rq-chip${sel.has(Number(k)) ? " active" : ""}" data-action="chapter" data-value="${k}" aria-pressed="${sel.has(Number(k))}">${escapeHtml(label)} <span class="rq-chip-n">${n}</span></button>`;
+  }).join("");
+  const countChips = [...RQ_COUNTS, "all"].map((c) =>
+    `<button type="button" class="rq-chip${rulesQuiz.prefs.count === c ? " active" : ""}" data-action="count" data-value="${c}">${c === "all" ? "Alle" : c}</button>`).join("");
+  const typeChips = Object.entries(RQ_TYPES).map(([k, label]) =>
+    `<button type="button" class="rq-chip${rulesQuiz.prefs.type === k ? " active" : ""}" data-action="type" data-value="${k}">${label}</button>`).join("");
+
+  document.getElementById("rules-content").innerHTML = `
+    <h2>Regel-Quiz Handgun</h2>
+    <p class="settings-note">${escapeHtml(data.edition || "")} · ${data.single.length} feste Fragen und ${data.pools.length} Mehrfach-Fragen, die bei jedem Durchgang neu gemischt werden.</p>
+    <div class="section-title">Kapitel</div>
+    <div class="rq-chips">${chapterChips}</div>
+    <div class="rq-chips rq-chips-tools">
+      <button type="button" class="tool-btn" data-action="chapters-all">Alle Kapitel</button>
+    </div>
+    <div class="section-title">Fragetyp</div>
+    <div class="rq-chips">${typeChips}</div>
+    <div class="section-title">Anzahl Fragen</div>
+    <div class="rq-chips">${countChips}</div>
+    <p class="rq-setup-msg" id="rq-setup-msg" role="status"></p>
+    <div class="form-actions rq-actions">
+      <button type="button" class="tool-btn" data-action="wrong"${openWrong ? "" : " disabled"}>Nur meine Fehler (${openWrong})</button>
+      <button type="button" class="save-btn" data-action="start">Quiz starten</button>
+    </div>
+    <p class="settings-note">${seen ? `Bisher geübt: ${seen} von ${total} Fragen.` : "Noch keine Fragen beantwortet."} Eigene Lernhilfe, sinngemäß zusammengefasst – maßgeblich ist der englische Originaltext des Regelwerks.</p>
+    ${seen ? `<button type="button" class="link-btn rq-reset" data-action="reset">Fortschritt zurücksetzen</button>` : ""}`;
+}
+
+function startRulesQuizRound(questions) {
+  if (!questions.length) {
+    renderRulesQuizSetup();
+    document.getElementById("rq-setup-msg").textContent = "Für diese Auswahl gibt es keine Fragen – bitte Kapitel oder Fragetyp ändern.";
+    return;
+  }
+  rulesQuiz.round++;
+  saveRulesQuiz();
+  rqRun = { questions, idx: 0, right: 0, wrong: [], answered: false, picked: new Set() };
+  renderRulesQuizQuestion();
+}
+
+function renderRulesQuizQuestion() {
+  const run = rqRun, item = run.questions[run.idx];
+  const data = rqData();
+  const optsHtml = item.opts.map((o, i) => {
+    let cls = "rq-opt";
+    if (run.answered) {
+      if (o.ok) cls += " correct";
+      else if (run.picked.has(i)) cls += " wrong";
+    } else if (run.picked.has(i)) cls += " picked";
+    const mark = item.multi ? `<span class="rq-box" aria-hidden="true">${run.picked.has(i) ? "✓" : ""}</span>` : "";
+    return `<button type="button" class="${cls}" data-action="opt" data-value="${i}"${run.answered ? " disabled" : ""}${item.multi ? ` aria-pressed="${run.picked.has(i)}"` : ""}>${mark}<span>${escapeHtml(o.t)}</span></button>`;
+  }).join("");
+
+  let feedback = "";
+  if (run.answered) {
+    const good = run.lastCorrect;
+    const detail = item.multi
+      ? `<ul class="rq-why">${item.opts.map((o) => `<li class="${o.ok ? "rq-yes" : "rq-no"}">${o.ok ? "✓" : "✗"} ${escapeHtml(o.t)}${o.why ? ` – ${escapeHtml(o.why)}` : ""} <span class="rq-rule">${escapeHtml(o.rule)}</span></li>`).join("")}</ul>`
+      : `<p>${escapeHtml(item.expl)}</p>`;
+    feedback = `<div class="rq-feedback ${good ? "ok" : "bad"}"><strong>${good ? "Richtig." : "Nicht ganz."}</strong>${detail}</div>`;
+  }
+
+  const last = run.idx === run.questions.length - 1;
+  const pct = Math.round((run.idx / run.questions.length) * 100);
+  document.getElementById("rules-content").innerHTML = `
+    <div class="rq-meta"><span>Frage ${run.idx + 1} / ${run.questions.length}</span><span>${run.right} richtig</span></div>
+    <div class="rq-progress"><div class="rq-progress-bar"></div></div>
+    <div class="rq-chapter">${escapeHtml(data.chapters[item.ch] || "")} <span class="rq-rule">${escapeHtml(item.rule)}</span>${item.multi ? ` <span class="rq-multi-tag">Eine oder mehrere richtig</span>` : ""}</div>
+    <h3 class="rq-question">${escapeHtml(item.q)}</h3>
+    <div class="rq-opts">${optsHtml}</div>
+    ${feedback}
+    <div class="form-actions rq-actions">
+      <button type="button" class="tool-btn" data-action="quit">Beenden</button>
+      ${!run.answered && item.multi ? `<button type="button" class="save-btn" data-action="check"${run.picked.size ? "" : " disabled"}>Antwort prüfen</button>` : ""}
+      ${run.answered ? `<button type="button" class="save-btn" data-action="next">${last ? "Auswertung" : "Weiter"}</button>` : ""}
+    </div>`;
+  // Breite per CSSOM setzen – style-Attribute im Markup blockiert die CSP
+  document.querySelector("#rules-content .rq-progress-bar").style.width = pct + "%";
+}
+
+function rqRecordAnswer(item, correct) {
+  const s = rulesQuiz.stats[item.id] || { r: 0, w: 0, lw: false, ls: 0 };
+  if (correct) { s.r++; s.lw = false; } else { s.w++; s.lw = true; }
+  s.ls = rulesQuiz.round;
+  rulesQuiz.stats[item.id] = s;
+  saveRulesQuiz();
+}
+
+function rqEvaluate() {
+  const run = rqRun, item = run.questions[run.idx];
+  const correct = item.opts.every((o, i) => o.ok === run.picked.has(i));
+  run.answered = true;
+  run.lastCorrect = correct;
+  if (correct) run.right++; else run.wrong.push(item);
+  rqRecordAnswer(item, correct);
+  renderRulesQuizQuestion();
+}
+
+function renderRulesQuizResult(answeredCount) {
+  const run = rqRun;
+  const done = answeredCount;
+  const pct = done ? Math.round((run.right / done) * 100) : 0;
+  const verdict = pct >= 90 ? "Sehr sicher – RO-tauglich!" : pct >= 75 ? "Solide. Die Fehler noch festigen." : "Da lohnt sich noch eine Runde.";
+  const wrongHtml = run.wrong.map((item) => `
+    <li><span class="rq-rule">${escapeHtml(item.rule)}</span> ${escapeHtml(item.q)}
+      <div class="rq-answer">→ ${item.opts.filter((o) => o.ok).map((o) => escapeHtml(o.t)).join(" · ")}</div></li>`).join("");
+  document.getElementById("rules-content").innerHTML = `
+    <h2>Ergebnis</h2>
+    <div class="detail-grid">
+      <div class="stat-box"><div class="label">Richtig</div><div class="value">${run.right} / ${done}</div></div>
+      <div class="stat-box"><div class="label">Quote</div><div class="value">${pct} %</div></div>
+    </div>
+    <p>${done ? verdict : "Keine Frage beantwortet."}</p>
+    ${run.wrong.length ? `<div class="section-title">Falsch beantwortet</div><ul class="rq-wrong-list">${wrongHtml}</ul>` : ""}
+    <div class="form-actions rq-actions">
+      <button type="button" class="tool-btn" data-action="setup">Zur Auswahl</button>
+      ${run.wrong.length ? `<button type="button" class="tool-btn" data-action="retry">Falsche wiederholen</button>` : ""}
+      <button type="button" class="save-btn" data-action="start">Neue Runde</button>
+    </div>`;
+  rqRun = { ...run, finished: true };
+}
+
+function handleRulesQuizClick(e) {
+  const btn = e.target.closest("[data-action]");
+  if (!btn || btn.disabled) return;
+  const action = btn.dataset.action, value = btn.dataset.value;
+  const prefs = rulesQuiz.prefs;
+  switch (action) {
+    case "chapter": {
+      const ch = Number(value);
+      const sel = new Set(rqSelectedChapters());
+      if (sel.has(ch)) sel.delete(ch); else sel.add(ch);
+      if (!sel.size) sel.add(ch); // mindestens ein Kapitel bleibt ausgewählt
+      prefs.chapters = sel.size === rqAllChapters().length ? [] : [...sel].sort((a, b) => a - b);
+      saveRulesQuiz(); renderRulesQuizSetup(); break;
+    }
+    case "chapters-all": prefs.chapters = []; saveRulesQuiz(); renderRulesQuizSetup(); break;
+    case "count": prefs.count = value === "all" ? "all" : Number(value); saveRulesQuiz(); renderRulesQuizSetup(); break;
+    case "type": prefs.type = value; saveRulesQuiz(); renderRulesQuizSetup(); break;
+    case "start": startRulesQuizRound(rqBuildRound()); break;
+    case "wrong": startRulesQuizRound(rqBuildRound({ onlyWrong: true })); break;
+    case "retry": startRulesQuizRound(rqBuildRound({ retry: rqRun.wrong })); break;
+    case "setup": renderRulesQuizSetup(); break;
+    case "reset":
+      if (confirm("Den gesamten Quiz-Fortschritt löschen?")) {
+        rulesQuiz.stats = {}; rulesQuiz.round = 0; saveRulesQuiz(); renderRulesQuizSetup();
+      }
+      break;
+    case "opt": {
+      const run = rqRun;
+      if (!run || run.answered) return;
+      const i = Number(value), item = run.questions[run.idx];
+      if (item.multi) {
+        if (run.picked.has(i)) run.picked.delete(i); else run.picked.add(i);
+        renderRulesQuizQuestion();
+      } else {
+        run.picked = new Set([i]);
+        rqEvaluate();
+      }
+      break;
+    }
+    case "check": rqEvaluate(); break;
+    case "next":
+      if (rqRun.idx < rqRun.questions.length - 1) {
+        rqRun.idx++; rqRun.answered = false; rqRun.picked = new Set();
+        renderRulesQuizQuestion();
+        document.getElementById("rules-overlay").scrollTop = 0;
+      } else {
+        renderRulesQuizResult(rqRun.questions.length);
+      }
+      break;
+    case "quit": renderRulesQuizResult(rqRun.idx + (rqRun.answered ? 1 : 0)); break;
+  }
+}
+
+// Fortschritt aus einer Export-Datei übernehmen: pro Frage der jeweils höhere Stand
+function mergeRulesQuizStats(raw) {
+  const incoming = sanitizeRulesQuiz(raw);
+  let merged = 0;
+  for (const [id, s] of Object.entries(incoming.stats)) {
+    const own = rulesQuiz.stats[id];
+    if (!own) { rulesQuiz.stats[id] = { ...s, ls: 0 }; merged++; continue; }
+    if (s.r > own.r || s.w > own.w) {
+      own.r = Math.max(own.r, s.r); own.w = Math.max(own.w, s.w);
+      merged++;
+    }
+  }
+  if (merged) saveRulesQuiz();
+  return merged;
 }
 
 // ---------- Statistik: Übersicht über alle Übungen und Trainings hinweg ----------
@@ -4073,14 +4450,14 @@ function exportAll() {
     customDrills,
     editedBuiltins,
     deletedBuiltinIds,
-    ...(includeScores ? { scoreLogs, favorites: [...favorites], sessions, matches, plans: customPlans, planProgress } : {}),
+    ...(includeScores ? { scoreLogs, favorites: [...favorites], sessions, matches, plans: customPlans, planProgress, rulesQuiz: { stats: rulesQuiz.stats } } : {}),
     ...(!includeScores && customPlans.length ? { plans: customPlans } : {})
   };
   downloadJSON(JSON.stringify(payload, null, 2), "ipsc-training-export.json");
   localStorage.setItem(LAST_EXPORT_KEY, new Date().toISOString());
   document.getElementById("export-reminder-banner").classList.add("hidden");
   showDbMsg(includeScores
-    ? "Export (inkl. Zeiten, Favoriten, Tagebuch, Matches und Plänen) heruntergeladen."
+    ? "Export (inkl. Zeiten, Favoriten, Tagebuch, Matches, Plänen und Quiz-Fortschritt) heruntergeladen."
     : "Export heruntergeladen – Datei an Kollegen weitergeben, die können sie importieren.");
 }
 
@@ -4367,6 +4744,8 @@ function importFile(file) {
         savePlanProgress();
       }
 
+      const quizMerged = data.rulesQuiz && typeof data.rulesQuiz === "object" ? mergeRulesQuizStats(data.rulesQuiz) : 0;
+
       if (Array.isArray(data.favorites)) {
         for (const srcId of data.favorites) {
           const key = typeof srcId === "string" ? (idMap[srcId] || (builtinIds.has(srcId) ? srcId : null)) : null;
@@ -4385,6 +4764,7 @@ function importFile(file) {
       if (sessionsAdded) parts.push(`${sessionsAdded} Trainingseinheit(en) übernommen`);
       if (matchesAdded) parts.push(`${matchesAdded} Match(es) übernommen`);
       if (plansAdded) parts.push(`${plansAdded} Trainingsplan/-pläne übernommen`);
+      if (quizMerged) parts.push(`Quiz-Fortschritt für ${quizMerged} Frage(n) übernommen`);
       if (keptLocalEdits) parts.push(`${keptLocalEdits} eigene Bearbeitung(en) beibehalten`);
       showDbMsg(parts.join(", ") + ".");
     } else if (data.type === "ipsc-training-drill" && data.drill) {

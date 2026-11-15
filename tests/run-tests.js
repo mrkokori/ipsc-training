@@ -35,6 +35,7 @@ function boot({ builtins = true, storage = {}, hash = "", beforeApp } = {}) {
   for (const [k, v] of Object.entries(storage)) w.localStorage.setItem(k, JSON.stringify(v));
   if (beforeApp) beforeApp(w);
   w.eval(builtins ? read("data/drills.js") : "window.IPSC_DRILLS = [];");
+  w.eval(read("data/rules-quiz.js"));
   w.eval(read("lib/qrcode.js"));
   w.eval(read("app.js") + "\n;window.__t = (x) => eval(x);");
   return { w, E: (x) => w.__t(x), $: (s) => w.document.querySelector(s), $$: (s) => [...w.document.querySelectorAll(s)] };
@@ -1273,6 +1274,92 @@ async function testSecurityHardening() {
     "Hinweisbalken nennt den fehlgeschlagenen Teil");
 }
 
+async function testRulesQuiz() {
+  section("Regel-Quiz");
+  const data = (() => { const win = {}; new Function("window", read("data/rules-quiz.js"))(win); return win.IPSC_RULES_QUIZ; })();
+  ok(data.single.length >= 200 && data.pools.length >= 10, `Katalog geladen (${data.single.length} Einzelfragen, ${data.pools.length} Mehrfach-Pools)`);
+  ok(data.single.every((q) => q.length === 5 && Number.isInteger(q[0]) && data.chapters[q[0]] && q[3].length === 4 && new Set(q[3]).size === 4 && q[4]),
+    "jede Einzelfrage hat Kapitel, Regel, 4 verschiedene Antworten und eine Erklärung");
+  ok(new Set(data.single.map((q) => q[2])).size === data.single.length, "keine doppelten Fragetexte (stabile IDs)");
+  ok(data.pools.every((p) => p.yes.length >= 1 && p.no.length >= 2 && [...p.yes, ...p.no].every((o) => o.length === 3 && o[0] && o[1])), "jeder Mehrfach-Pool hat richtige und falsche Aussagen mit Regel und Begründung");
+
+  let { w, E, $, $$ } = boot();
+  $("#rules-btn").click();
+  ok(!$("#rules-overlay").classList.contains("hidden") && /Regel-Quiz Handgun/.test($("#rules-content").textContent), "Quiz öffnet mit Auswahl");
+
+  // Mehrfach-Fragen werden jedes Mal neu gemischt
+  const pool = data.pools.find((p) => p.id === "dq");
+  const keys = new Set();
+  let validShapes = 0;
+  for (let i = 0; i < 30; i++) {
+    const q = E("rqBuildPoolQuestion")(pool);
+    const right = q.opts.filter((o) => o.ok).length;
+    if (right >= 1 && right < q.opts.length && q.opts.length >= 4) validShapes++;
+    keys.add(q.key);
+  }
+  ok(validShapes === 30, "jede Mehrfach-Frage hat 4–5 Antworten, davon mindestens eine richtige und eine falsche");
+  ok(keys.size >= 10, `DQ-Pool erzeugt wechselnde Kombinationen (${keys.size} verschiedene in 30 Durchläufen)`);
+
+  // Nur Mehrfach-Fragen, Runde mit 10 Fragen
+  $("[data-action=type][data-value=multi]").click();
+  $("[data-action=count][data-value='10']").click();
+  $("[data-action=start]").click();
+  ok(/Frage 1 \/ 10/.test($("#rules-content").textContent) && /Eine oder mehrere richtig/.test($("#rules-content").textContent), "Runde mit Mehrfach-Fragen startet");
+  ok($("[data-action=check]").disabled, "„Antwort prüfen“ erst nach einer Auswahl aktiv");
+  // genau die richtigen Antworten wählen
+  const run = E("rqRun");
+  run.questions[0].opts.forEach((o, i) => { if (o.ok) $(`[data-action=opt][data-value='${i}']`).click(); });
+  $("[data-action=check]").click();
+  ok(E("rqRun").right === 1 && $(".rq-feedback.ok") && $$(".rq-why li").length === run.questions[0].opts.length, "richtige Auswahl wird gewertet, jede Aussage mit Begründung");
+  $("[data-action=next]").click();
+  // falsch: nur eine falsche Antwort wählen
+  const q2 = E("rqRun").questions[1];
+  $(`[data-action=opt][data-value='${q2.opts.findIndex((o) => !o.ok)}']`).click();
+  $("[data-action=check]").click();
+  ok(E("rqRun").wrong.length === 1 && $(".rq-feedback.bad") && $(".rq-opt.wrong"), "falsche Auswahl wird markiert");
+  $("[data-action=quit]").click();
+  ok(/1 \/ 2/.test($("#rules-content").textContent) && $(".rq-wrong-list li"), "Auswertung nach Abbruch zeigt Ergebnis und Fehler");
+  const stored = JSON.parse(w.localStorage.getItem("ipscRulesQuiz"));
+  ok(stored.stats[q2.id] && stored.stats[q2.id].lw === true && stored.prefs.type === "multi" && stored.prefs.count === 10, "Fortschritt und Auswahl werden gespeichert");
+
+  // Einzelfrage: Antippen wertet sofort
+  $("[data-action=setup]").click();
+  $("[data-action=type][data-value=single]").click();
+  $("[data-action=start]").click();
+  const s1 = E("rqRun").questions[0];
+  ok(!s1.multi && !$("[data-action=check]"), "Einzelfragen ohne Prüfen-Knopf");
+  $(`[data-action=opt][data-value='${s1.opts.findIndex((o) => o.ok)}']`).click();
+  ok($(".rq-feedback.ok") && $(".rq-opt.correct"), "Einzelfrage wird beim Antippen gewertet");
+
+  // „Nur meine Fehler“ enthält die falsch beantwortete Frage
+  $("[data-action=quit]").click();
+  $("[data-action=setup]").click();
+  $("[data-action=wrong]").click();
+  ok(E("rqRun").questions.some((q) => q.id === q2.id), "„Nur meine Fehler“ übt die falsch beantwortete Frage");
+
+  // Kapitel-Auswahl: nur Kapitel 9
+  $("[data-action=quit]").click();
+  $("[data-action=setup]").click();
+  $("[data-action=type][data-value=mixed]").click();
+  E("rulesQuiz").prefs.chapters = [9];
+  const round = E("rqBuildRound")();
+  ok(round.length > 0 && round.every((q) => q.ch === 9), "Kapitel-Filter wirkt");
+
+  // Gewichtung: frisch richtig beantwortete Fragen der letzten Runde kommen seltener
+  ok(E("rqWeight")("s-unbekannt") > E("rqWeight")(s1.id), "zuletzt richtig beantwortete Fragen werden seltener gezogen");
+
+  // Manipulierte Daten im Speicher
+  ({ w, E, $ } = boot({ storage: { ipscRulesQuiz: { stats: { "<img>": { r: 1 }, "s-abc": { r: "x", w: -3, lw: "ja" } }, prefs: { chapters: [99, 3], count: 7, type: "x" } } } }));
+  const rq = E("rulesQuiz");
+  ok(!rq.stats["<img>"] && rq.stats["s-abc"].r === 0 && rq.stats["s-abc"].w === 0 && rq.stats["s-abc"].lw === false
+    && rq.prefs.chapters.join() === "3" && rq.prefs.count === 20 && rq.prefs.type === "mixed", "gespeicherter Quiz-Stand wird geprüft");
+
+  // Escape schließt das Quiz
+  $("#rules-btn").click();
+  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" }));
+  ok($("#rules-overlay").classList.contains("hidden") && E("bodyScrollLockCount") === 0, "Escape schließt das Quiz und hebt die Scroll-Sperre auf");
+}
+
 function testHtmlHardening() {
   section("HTML-Grundgerüst: CSP, Versionierung, Aufräumen");
   const html = read("index.html");
@@ -1285,6 +1372,7 @@ function testHtmlHardening() {
   ok(new RegExp(`<script src="app\\.js\\?v=${v}">`).test(html), "app.js wird mit Versionsnummer geladen (Cache-Busting nach einem Update)");
   ok(new RegExp(`<script src="data/drills\\.js\\?v=${v}">`).test(html), "data/drills.js wird mit Versionsnummer geladen");
   ok(new RegExp(`<script src="lib/qrcode\\.js\\?v=${v}">`).test(html), "lib/qrcode.js wird mit Versionsnummer geladen");
+  ok(new RegExp(`<script src="data/rules-quiz\\.js\\?v=${v}">`).test(html), "data/rules-quiz.js wird mit Versionsnummer geladen");
 
   ok(fs.existsSync(path.join(ROOT, ".github/workflows/tests.yml")), "Test-Workflow für GitHub Actions ist vorhanden");
   ok(!fs.existsSync(path.join(ROOT, "Tests")), "alter, doppelter Tests-Ordner ist entfernt");
@@ -1302,7 +1390,7 @@ function testLicenseFiles() {
 }
 
 (async () => {
-  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testPlanWalkthrough, testStageEditor, testMatches, testPlans, testTrainingSuggestion, testStats, testGoals, testMicrophone, testInstallAndExportReminder, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
+  for (const suite of [testScoringAndSecurity, testLibrarySearchFavorites, testSettingsStatsTimer, testSharingAndSketch, testMultiShare, testBriefingJournalPrint, testShotPlan, testPlanWalkthrough, testStageEditor, testMatches, testPlans, testTrainingSuggestion, testStats, testRulesQuiz, testGoals, testMicrophone, testInstallAndExportReminder, testUpdateBanner, testServiceWorker, testSecurityHardening, testHtmlHardening, testLicenseFiles]) {
     try { await suite(); } catch (e) { failed++; console.log("  ✗ Testblock abgebrochen: " + (e && e.stack || e)); }
   }
   console.log(`\n${passed} bestanden, ${failed} fehlgeschlagen`);
