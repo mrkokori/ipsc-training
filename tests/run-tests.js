@@ -1311,6 +1311,7 @@ async function testRulesQuiz() {
   run.questions[0].opts.forEach((o, i) => { if (o.ok) $(`[data-action=opt][data-value='${i}']`).click(); });
   $("[data-action=check]").click();
   ok(E("rqRun").right === 1 && $(".rq-feedback.ok") && $$(".rq-why li").length === run.questions[0].opts.length, "richtige Auswahl wird gewertet, jede Aussage mit Begründung");
+  ok($$(".rq-ref .rq-rule").length >= 1, "Mehrfachfrage nennt die Regelnummern zum Nachlesen");
   $("[data-action=next]").click();
   // falsch: nur eine falsche Antwort wählen
   const q2 = E("rqRun").questions[1];
@@ -1327,9 +1328,15 @@ async function testRulesQuiz() {
   $("[data-action=type][data-value=single]").click();
   $("[data-action=start]").click();
   const s1 = E("rqRun").questions[0];
-  ok(!s1.multi && !$("[data-action=check]"), "Einzelfragen ohne Prüfen-Knopf");
-  $(`[data-action=opt][data-value='${s1.opts.findIndex((o) => o.ok)}']`).click();
-  ok($(".rq-feedback.ok") && $(".rq-opt.correct"), "Einzelfrage wird beim Antippen gewertet");
+  const rightIdx = s1.opts.findIndex((o) => o.ok), wrongIdx = s1.opts.findIndex((o) => !o.ok);
+  ok(!s1.multi && $("[data-action=check]").disabled && $$(".rq-box.rq-radio").length === 4, "Einzelfrage: runde Häkchen, „Antwort prüfen“ erst nach Auswahl");
+  $(`[data-action=opt][data-value='${wrongIdx}']`).click();
+  ok(!$(".rq-feedback") && $(`[data-action=opt][data-value='${wrongIdx}']`).getAttribute("aria-pressed") === "true", "Antippen wertet noch nicht, sondern setzt nur das Häkchen");
+  $(`[data-action=opt][data-value='${rightIdx}']`).click();
+  ok($$(".rq-opt.picked").length === 1 && $(`[data-action=opt][data-value='${rightIdx}']`).classList.contains("picked"), "Antwort lässt sich vor dem Prüfen ändern (nur ein Häkchen bei Einzelfragen)");
+  $("[data-action=check]").click();
+  ok($(".rq-feedback.ok") && $(".rq-opt.correct"), "Einzelfrage wird nach „Antwort prüfen“ gewertet");
+  ok($(".rq-ref") && $(".rq-ref").textContent.includes(s1.rule), `Auflösung nennt die Regelnummer zum Nachlesen (${s1.rule})`);
 
   // „Nur meine Fehler“ enthält die falsch beantwortete Frage
   $("[data-action=quit]").click();

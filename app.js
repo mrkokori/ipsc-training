@@ -12,7 +12,7 @@ let planProgress = {};
 let goals = {};
 
 // Versionsnummer der App. Bei jeder Veröffentlichung hier UND in sw.js erhöhen.
-const APP_VERSION = "2026.11.15.1";
+const APP_VERSION = "2026.11.15.2";
 
 const CUSTOM_STORAGE_KEY = "ipscCustomDrills";
 const EDITED_BUILTINS_KEY = "ipscEditedBuiltins";
@@ -1393,8 +1393,10 @@ function renderRulesQuizQuestion() {
       if (o.ok) cls += " correct";
       else if (run.picked.has(i)) cls += " wrong";
     } else if (run.picked.has(i)) cls += " picked";
-    const mark = item.multi ? `<span class="rq-box" aria-hidden="true">${run.picked.has(i) ? "✓" : ""}</span>` : "";
-    return `<button type="button" class="${cls}" data-action="opt" data-value="${i}"${run.answered ? " disabled" : ""}${item.multi ? ` aria-pressed="${run.picked.has(i)}"` : ""}>${mark}<span>${escapeHtml(o.t)}</span></button>`;
+    // Häkchen bei allen Fragen: Auswahl lässt sich bis „Antwort prüfen“ ändern.
+    // Einzelfragen haben runde Kästchen (nur eine Auswahl), Mehrfachfragen eckige.
+    const mark = `<span class="rq-box${item.multi ? "" : " rq-radio"}" aria-hidden="true">${run.picked.has(i) ? "✓" : ""}</span>`;
+    return `<button type="button" class="${cls}" data-action="opt" data-value="${i}"${run.answered ? " disabled" : ""} aria-pressed="${run.picked.has(i)}">${mark}<span>${escapeHtml(o.t)}</span></button>`;
   }).join("");
 
   let feedback = "";
@@ -1403,7 +1405,9 @@ function renderRulesQuizQuestion() {
     const detail = item.multi
       ? `<ul class="rq-why">${item.opts.map((o) => `<li class="${o.ok ? "rq-yes" : "rq-no"}">${o.ok ? "✓" : "✗"} ${escapeHtml(o.t)}${o.why ? ` – ${escapeHtml(o.why)}` : ""} <span class="rq-rule">${escapeHtml(o.rule)}</span></li>`).join("")}</ul>`
       : `<p>${escapeHtml(item.expl)}</p>`;
-    feedback = `<div class="rq-feedback ${good ? "ok" : "bad"}"><strong>${good ? "Richtig." : "Nicht ganz."}</strong>${detail}</div>`;
+    const refs = rqRuleRefs(item).map((r) => `<span class="rq-rule">${escapeHtml(r)}</span>`).join(" ");
+    feedback = `<div class="rq-feedback ${good ? "ok" : "bad"}"><strong>${good ? "Richtig." : "Nicht ganz."}</strong>${detail}
+      <p class="rq-ref">📖 Im Regelwerk nachlesen: ${refs}</p></div>`;
   }
 
   const last = run.idx === run.questions.length - 1;
@@ -1411,17 +1415,24 @@ function renderRulesQuizQuestion() {
   document.getElementById("rules-content").innerHTML = `
     <div class="rq-meta"><span>Frage ${run.idx + 1} / ${run.questions.length}</span><span>${run.right} richtig</span></div>
     <div class="rq-progress"><div class="rq-progress-bar"></div></div>
-    <div class="rq-chapter">${escapeHtml(data.chapters[item.ch] || "")} <span class="rq-rule">${escapeHtml(item.rule)}</span>${item.multi ? ` <span class="rq-multi-tag">Eine oder mehrere richtig</span>` : ""}</div>
+    <div class="rq-chapter">${escapeHtml(data.chapters[item.ch] || "")}${run.answered ? ` <span class="rq-rule">${escapeHtml(item.rule)}</span>` : ""}${item.multi ? ` <span class="rq-multi-tag">Eine oder mehrere richtig</span>` : ""}</div>
     <h3 class="rq-question">${escapeHtml(item.q)}</h3>
     <div class="rq-opts">${optsHtml}</div>
     ${feedback}
     <div class="form-actions rq-actions">
       <button type="button" class="tool-btn" data-action="quit">Beenden</button>
-      ${!run.answered && item.multi ? `<button type="button" class="save-btn" data-action="check"${run.picked.size ? "" : " disabled"}>Antwort prüfen</button>` : ""}
+      ${!run.answered ? `<button type="button" class="save-btn" data-action="check"${run.picked.size ? "" : " disabled"}>Antwort prüfen</button>` : ""}
       ${run.answered ? `<button type="button" class="save-btn" data-action="next">${last ? "Auswertung" : "Weiter"}</button>` : ""}
     </div>`;
   // Breite per CSSOM setzen – style-Attribute im Markup blockiert die CSP
   document.querySelector("#rules-content .rq-progress-bar").style.width = pct + "%";
+}
+
+// Regelnummern zum Nachlesen: bei Einzelfragen die der Frage, bei Mehrfachfragen
+// die aller Antworten (ohne Doppelte, Platzhalter „—“ ausgelassen)
+function rqRuleRefs(item) {
+  if (!item.multi) return [item.rule];
+  return [...new Set(item.opts.map((o) => o.rule).filter((r) => r && r !== "—"))];
 }
 
 function rqRecordAnswer(item, correct) {
@@ -1500,8 +1511,8 @@ function handleRulesQuizClick(e) {
         if (run.picked.has(i)) run.picked.delete(i); else run.picked.add(i);
         renderRulesQuizQuestion();
       } else {
-        run.picked = new Set([i]);
-        rqEvaluate();
+        run.picked = run.picked.has(i) ? new Set() : new Set([i]);
+        renderRulesQuizQuestion();
       }
       break;
     }
